@@ -205,5 +205,5 @@ with t_atelier:
             format_func=lambda x: x if x.startswith("--") else f"[{MASTER_LIBRARY[x].get('cas', 'N/A')}] {MASTER_LIBRARY[x]['name_cn']} | {MASTER_LIBRARY[x]['family']} ({MASTER_LIBRARY[x]['note']})"
         )
     with col_add_btn:
-        st.write("")
-        if st.button("加入配方", use_container_
+    st.write("")
+    if st.button("加入配方", use_container_width=True) and not to_add_id.startswith("--"):
