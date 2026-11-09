@@ -13,7 +13,7 @@ from core import generate_smart_advisory, analyze_formula_realtime, calculate_mo
 # ==============================================================================
 st.set_page_config(page_title="Global Fragrance OS | 智慧調香工作站", layout="wide", page_icon="✨")
 
-# 動態建立 CAS 倒排索引（確保無論 library.py 是否改動皆零錯誤執行）
+# 動態建立 CAS 倒排索引
 CAS_INDEX = {
     v["cas"]: k for k, v in MASTER_LIBRARY.items() if v.get("cas") and v["cas"] != "-"
 }
@@ -75,7 +75,7 @@ with st.sidebar:
     st.subheader("🎯 目標成品規格")
     selected_tier = st.selectbox("濃度等級 (連動 IFRA 紅線)", list(PERFUME_CONCENTRATION_PRESETS.keys()), index=2)
     dosage_ratio = PERFUME_CONCENTRATION_PRESETS[selected_tier]
-    
+
     st.divider()
     st.subheader("📂 實驗室打樣版本 (Mods)")
     mod_list = list(st.session_state.mods.keys())
@@ -146,7 +146,7 @@ with t_adv:
             "原料庫清單 (支援 CAS / 名稱)", hero_options,
             format_func=lambda x: f"[{MASTER_LIBRARY[x].get('cas', 'N/A')}] {MASTER_LIBRARY[x]['name_cn']} ({MASTER_LIBRARY[x]['note']})"
         )
-        
+
         advisory_res = generate_smart_advisory(selected_hero, MASTER_LIBRARY)
         hero_meta = MASTER_LIBRARY[selected_hero]
 
@@ -194,9 +194,9 @@ with t_atelier:
     st.markdown(f"### 🎨 配方工作室：<span class='mod-pill'>{st.session_state.active_mod}</span>", unsafe_allow_html=True)
     st.caption("僅列出當前配方選用之原料。支援 CAS 號碼搜尋、0.00g 精確進位、稀釋度拆解與即時 IFRA 紅綠燈提示。")
 
-    # --- 關鍵升級：支援 CAS 號碼模糊比對搜尋 ---
+    # 支援 CAS 號碼模糊比對搜尋
     available_to_add = [k for k in MASTER_LIBRARY.keys() if k not in current_formula]
-    
+
     col_add_sel, col_add_btn = st.columns([3.5, 1])
     with col_add_sel:
         to_add_id = st.selectbox(
@@ -205,5 +205,164 @@ with t_atelier:
             format_func=lambda x: x if x.startswith("--") else f"[{MASTER_LIBRARY[x].get('cas', 'N/A')}] {MASTER_LIBRARY[x]['name_cn']} | {MASTER_LIBRARY[x]['family']} ({MASTER_LIBRARY[x]['note']})"
         )
     with col_add_btn:
-    st.write("")
-    if st.button("加入配方", use_container_width=True) and not to_add_id.startswith("--"):
+        st.write("")
+        if st.button("加入配方", use_container_width=True) and not to_add_id.startswith("--"):
+            m_def = MASTER_LIBRARY[to_add_id]
+            st.session_state.mods[st.session_state.active_mod][to_add_id] = {
+                "gross_g": 0.50,
+                "dilution_pct": m_def["default_dilution"],
+                "solvent": m_def["default_solvent"]
+            }
+            st.rerun()
+
+    st.divider()
+
+    # 動態原料清單
+    if not current_formula:
+        st.info("👈 當前工作台尚無原料。請於上方搜尋並加入原料，或前往 Tab 1 由智慧導航注入起手骨架。")
+    else:
+        updated_formula = {}
+        to_delete = None
+
+        for ing_id, data in current_formula.items():
+            m = MASTER_LIBRARY[ing_id]
+            cas_no = m.get("cas", "-")
+
+            # 即時法規狀態徽章
+            badge_html = "<span class='ifra-badge-safe'>✅ IFRA SAFE</span>"
+            if ing_id in rt_calc["ifra_status"]:
+                st_info = rt_calc["ifra_status"][ing_id]
+                risk = st_info["risk_ratio"]
+                if risk > 1.0:
+                    badge_html = f"<span class='ifra-badge-danger'>🚨 IFRA 超標 ({risk*100:.0f}%)</span>"
+                elif risk > 0.8:
+                    badge_html = f"<span class='ifra-badge-warn'>⚠️ 逼近上限 ({risk*100:.0f}%)</span>"
+
+            # 單一原料卡片列
+            st.markdown(
+                f"**{m['name_cn']}** <span class='cas-tag'>CAS: {cas_no}</span> `{m['note']}` | `{m['family']}` {badge_html}",
+                unsafe_allow_html=True
+            )
+
+            c_g, c_dil, c_sol, c_del = st.columns([1.5, 1.2, 1.5, 0.6])
+
+            new_g = c_g.number_input(
+                "秤重 (g)", min_value=0.01, max_value=50.00,
+                value=float(data["gross_g"]), step=0.05, format="%.2f",
+                key=f"at_g_{st.session_state.active_mod}_{ing_id}"
+            )
+            new_dil = c_dil.selectbox(
+                "濃度 %", [100.0, 50.0, 20.0, 10.0, 1.0],
+                index=[100.0, 50.0, 20.0, 10.0, 1.0].index(float(data["dilution_pct"])),
+                key=f"at_d_{st.session_state.active_mod}_{ing_id}"
+            )
+            new_sol = c_sol.selectbox(
+                "載體溶劑", SOLVENT_CHOICES,
+                index=SOLVENT_CHOICES.index(data["solvent"]) if data["solvent"] in SOLVENT_CHOICES else 0,
+                key=f"at_s_{st.session_state.active_mod}_{ing_id}"
+            )
+            with c_del:
+                st.write("")
+                if st.button("🗑️", key=f"del_{st.session_state.active_mod}_{ing_id}"):
+                    to_delete = ing_id
+
+            updated_formula[ing_id] = {"gross_g": new_g, "dilution_pct": new_dil, "solvent": new_sol}
+            st.divider()
+
+        # 處理刪除邏輯
+        if to_delete:
+            del st.session_state.mods[st.session_state.active_mod][to_delete]
+            st.rerun()
+
+        # 數值變更重整
+        if updated_formula != current_formula:
+            st.session_state.mods[st.session_state.active_mod] = updated_formula
+            st.rerun()
+
+# ==============================================================================
+# TAB 3: 氣味建築 (Architecture - 風味輪、雷達與盲測筆記)
+# ==============================================================================
+with t_arch:
+    st.header("📐 氣味建築與感官盲測 (Scent Architecture)")
+
+    if not mod_calc:
+        st.warning("⚠️ 請先於工作台輸入原料。")
+    else:
+        cw1, cw2 = st.columns([1.6, 1])
+        with cw1:
+            st.subheader("🎨 雙層香氣風味輪 (Olfactive Sunburst)")
+            sb_items = [{"Family": v["family"], "Name": v["name_cn"], "ActiveWeight": v["active_pct"]}
+                        for v in mod_calc["norm_active"].values()]
+            fig_sb = px.sunburst(
+                pd.DataFrame(sb_items), path=["Family", "Name"], values="ActiveWeight", color="Family",
+                color_discrete_map={"Woody": "#78350F", "Floral": "#EC4899", "Citrus": "#F59E0B", "Sweet": "#EF4444", "Spicy": "#B45309"},
+                height=420
+            )
+            fig_sb.update_layout(margin=dict(l=10, r=10, t=10, b=10))
+            st.plotly_chart(fig_sb, use_container_width=True)
+
+        with cw2:
+            st.subheader("五維能量雷達 (Energy Radar)")
+            f_keys = ["Woody", "Floral", "Citrus", "Sweet", "Spicy"]
+            f_vals = [mod_calc["family_pct"].get(k, 0.0) for k in f_keys]
+            fig_rad = go.Figure(go.Scatterpolar(
+                r=f_vals + [f_vals[0]], theta=f_keys + [f_keys[0]], fill='toself',
+                fillcolor='rgba(56, 189, 248, 0.25)', line=dict(color='#0EA5E9', width=2)
+            ))
+            fig_rad.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, max(f_vals) + 10])), showlegend=False, height=360, margin=dict(l=25, r=25, t=25, b=25))
+            st.plotly_chart(fig_rad, use_container_width=True)
+
+        st.divider()
+        ck1, ck2 = st.columns([1.5, 1])
+        with ck1:
+            st.subheader("⏳ 24h 感官演變模擬 (Sensory Kinetics)")
+            fig_traj = px.line(mod_calc["trajectory"], x="Hour", y=["Top", "Mid", "Base"], color_discrete_map={"Top": "#10B981", "Mid": "#F59E0B", "Base": "#6B7280"}, height=320)
+            fig_traj.update_layout(margin=dict(l=0, r=0, t=10, b=0), hovermode="x unified")
+            st.plotly_chart(fig_traj, use_container_width=True)
+
+        with ck2:
+            st.subheader("調香師聞香評估筆記 (Evaluation Log)")
+            c_note = st.session_state.mod_notes.get(st.session_state.active_mod, "")
+            n_note = st.text_area("記錄打樣在試香紙上的擴散半徑、轉折時間點：", value=c_note, height=220)
+            if n_note != c_note:
+                st.session_state.mod_notes[st.session_state.active_mod] = n_note
+
+# ==============================================================================
+# TAB 4: 商業放大量產閘門 (Scale-up)
+# ==============================================================================
+with t_scaleup:
+    st.header("🏭 商業放大量產閘門 (Commercial Scale-up)")
+    st.error(f"⚠️ 即將為定案配方 **{st.session_state.active_mod}** 執行工業放大，輸出符合代工廠投料規範之 ISO 22716 BMR 工單。")
+
+    cs1, cs2 = st.columns(2)
+    target_bottles = cs1.number_input("首批量產批次 (瓶)", 10, 10000, 100, 50)
+    target_vol = cs2.selectbox("單瓶容量規格 (ml)", [10, 30, 50, 100], index=2)
+
+    if st.button(f"🚀 鎖定 {st.session_state.active_mod} 並生成工廠投料單", type="primary", use_container_width=True):
+        final_calc = calculate_mod_profile(current_formula, dosage_ratio, {"bottles": target_bottles, "vol_ml": target_vol}, MASTER_LIBRARY)
+
+        if final_calc:
+            st.success("✅ 量產工單換算完成！")
+
+            fb1, fb2, fb3 = st.columns(3)
+            fb1.metric("總投料重量", f"{final_calc['batch']['total_g']:.1f} g")
+            fb2.metric("純香精克成本", f"NT$ {final_calc['cost_per_g_active']}/g")
+            fb3.metric("Phase B 變性酒精需投料", f"{final_calc['batch']['alcohol_g']:.1f} g")
+
+            if final_calc['batch']['carrier_solvents']:
+                sol_str = ", ".join([f"{k}: {v:.1f}g" for k, v in final_calc['batch']['carrier_solvents'].items()])
+                st.info(f"💡 系統已自動從 Phase B 酒精中扣除配方自帶的稀釋載體（{sol_str}），確保成品賦香率維持 {dosage_ratio*100:.1f}%。")
+
+            st.divider()
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                st.subheader("1. 匯出代工廠投料工單 (BMR CSV)")
+                csv_bytes = pd.DataFrame(final_calc["bmr_rows"]).to_csv(index=False).encode('utf-8-sig')
+                st.download_button("📥 下載 ISO 22716 工廠投料單", data=csv_bytes, file_name=f"BMR_{st.session_state.active_mod}_{target_bottles}pcs.csv", mime="text/csv", use_container_width=True)
+
+            with col_d2:
+                st.subheader("2. 外盒法定 INCI 標籤代碼")
+                inci_allergens = [a["name"].upper() for a in final_calc["declared_allergens"]]
+                inci_str = "ALCOHOL DENAT., PARFUM (FRAGRANCE), AQUA (WATER)" + (", " + ", ".join(inci_allergens) if inci_allergens else "")
+                st.code(inci_str, language="text")
+                st.caption("供毒理學家簽署 CPSR 安全評估報告使用。")
