@@ -4,32 +4,33 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-from config import PERFUME_CONCENTRATION_PRESETS, SOLVENT_CHOICES
-from library import MASTER_LIBRARY
-from core import generate_smart_advisory, analyze_formula_realtime, calculate_mod_profile
+from config import PERFUME_CONCENTRATION_PRESETS, SOLVENT_CHOICES, DILUTION_TIERS
+from library import MASTER_LIBRARY, CAS_INDEX, get_ingredient_by_cas
+from core import (
+    generate_smart_advisory,
+    build_compounding_sheet,
+    analyze_formula_realtime,
+    calculate_mod_profile
+)
 
 # ==============================================================================
-# 0. 系統環境、CAS 索引建構與響應式 CSS
+# 0. 系統環境與 CSS 樣式
 # ==============================================================================
-st.set_page_config(page_title="Global Fragrance OS | 智慧調香工作站", layout="wide", page_icon="✨")
-
-# 動態建立 CAS 倒排索引
-CAS_INDEX = {
-    v["cas"]: k for k, v in MASTER_LIBRARY.items() if v.get("cas") and v["cas"] != "-"
-}
+st.set_page_config(page_title="Global Fragrance OS | 專業調香工作站", layout="wide", page_icon="✨")
 
 st.markdown("""
 <style>
     @media (max-width: 768px) {
         .block-container { padding: 1rem 0.5rem !important; }
-        input[type="number"] { font-size: 16px !important; height: 44px !important; }
+        input[type="number"] { font-size: 16px !important; height: 40px !important; }
     }
     .mod-pill { background: #0F172A; color: #38BDF8; padding: 4px 12px; border-radius: 6px; font-weight: bold; border: 1px solid #0284C7; }
     .hero-card { background: #F8FAFC; border: 1px solid #E2E8F0; padding: 16px; border-radius: 10px; margin-bottom: 12px; }
-    .cas-tag { background: #F1F5F9; color: #475569; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 12px; border: 1px solid #CBD5E1; }
-    .ifra-badge-safe { background: #DCFCE7; color: #15803D; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
-    .ifra-badge-warn { background: #FEF3C7; color: #B45309; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
-    .ifra-badge-danger { background: #FEE2E2; color: #B91C1C; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+    .scale-chip { background: #064E3B; color: #6EE7B7; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 13px; font-weight: bold; display: inline-block; }
+    .cas-badge { background: #F1F5F9; color: #475569; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 11px; border: 1px solid #CBD5E1; }
+    .ifra-badge-safe { background: #DCFCE7; color: #15803D; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+    .ifra-badge-warn { background: #FEF3C7; color: #B45309; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+    .ifra-badge-danger { background: #FEE2E2; color: #B91C1C; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
     .sticky-hud {
         position: -webkit-sticky;
         position: sticky;
@@ -49,27 +50,28 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ------------------------------------------------------------------------------
-# 1. 狀態初始化與版本控制 (Modding)
+# 1. 狀態初始化 (Modding)
 # ------------------------------------------------------------------------------
 if "mods" not in st.session_state:
     st.session_state.mods = {
         "Mod 1": {
-            "sweet_orange": {"gross_g": 1.20, "dilution_pct": 100.0, "solvent": "None (100%純原液)"},
-            "hedione": {"gross_g": 1.50, "dilution_pct": 100.0, "solvent": "None (100%純原液)"},
-            "iso_e_super": {"gross_g": 1.80, "dilution_pct": 100.0, "solvent": "None (100%純原液)"}
+            "iso_e_super": {"gross_g": 1.50, "dilution_pct": 50.0, "solvent": "DPG (二丙二醇)"},
+            "hedione": {"gross_g": 1.20, "dilution_pct": 50.0, "solvent": "DPG (二丙二醇)"},
+            "sweet_orange": {"gross_g": 0.80, "dilution_pct": 50.0, "solvent": "DPG (二丙二醇)"},
+            "citral_syn": {"gross_g": 0.15, "dilution_pct": 10.0, "solvent": "DPG (二丙二醇)"}
         }
     }
 if "active_mod" not in st.session_state:
     st.session_state.active_mod = "Mod 1"
 if "mod_notes" not in st.session_state:
-    st.session_state.mod_notes = {"Mod 1": "經典木質柑橘基底，前調清亮，定香溫和。"}
+    st.session_state.mod_notes = {"Mod 1": "初始版：50% 稀釋底層木質與 10% 檸檬醛微調。"}
 
 # ------------------------------------------------------------------------------
-# 2. 側邊欄 (Sidebar)：HUD 總覽與版本切換
+# 2. 側邊欄 (Sidebar)
 # ------------------------------------------------------------------------------
 with st.sidebar:
     st.title("🌿 Scent Architect")
-    st.caption("AI 智慧引導與 CAS 專業調香工作站")
+    st.caption("AI 智慧引導與專業秤重母表工作站")
     st.divider()
 
     st.subheader("🎯 目標成品規格")
@@ -96,11 +98,12 @@ with st.sidebar:
 
     current_formula = st.session_state.mods[st.session_state.active_mod]
     total_g = sum([d["gross_g"] for d in current_formula.values()])
-    st.metric("⚖️ 當前秤重總量", f"{total_g:.2f} g")
+    st.metric("⚖️ 當前杯中秤重總量", f"{total_g:.2f} g")
 
-# 即時法規分析
+# 運算核心
 rt_calc = analyze_formula_realtime(current_formula, dosage_ratio, MASTER_LIBRARY)
 mod_calc = calculate_mod_profile(current_formula, dosage_ratio, {"bottles": 1, "vol_ml": 5}, MASTER_LIBRARY)
+sheet_rows = build_compounding_sheet(current_formula, dosage_ratio, MASTER_LIBRARY)
 
 # 頂部 Sticky HUD
 if mod_calc:
@@ -111,6 +114,8 @@ if mod_calc:
             <span class="mod-pill">{st.session_state.active_mod}</span>
             <span style="font-size:12px; color:#94A3B8; margin-left:8px;">純原油:</span>
             <b style="color:#FBBF24;">{rt_calc['total_active_g']:.2f} g</b>
+            <span style="font-size:12px; color:#94A3B8; margin-left:8px;">總秤重:</span>
+            <b>{total_g:.2f} g</b>
         </div>
         <div style="font-size:13px;">
             <span>前{mod_calc['notes_pct']['Top']:.0f}%</span> : 
@@ -121,33 +126,39 @@ if mod_calc:
     """, unsafe_allow_html=True)
 
 # ------------------------------------------------------------------------------
-# 3. 主分頁架構
+# 3. 主分頁導航
 # ------------------------------------------------------------------------------
 t_adv, t_atelier, t_arch, t_scaleup = st.tabs([
     "🕯️ 1. 智慧引導 (Advisory)",
-    "🎨 2. 配方工作台 (Atelier)",
+    "📋 2. 調香師秤重母表 (Compounding Sheet)",
     "📐 3. 氣味建築 (Architecture)",
     "🏭 4. 商業量產 (Scale-up)"
 ])
 
 # ==============================================================================
-# TAB 1: 智慧引導 (Advisory - 連動 CAS 與分子量)
+# TAB 1: 智慧引導 (支援四維風格選擇與真實稀釋起手)
 # ==============================================================================
 with t_adv:
     st.header("🕯️ 智慧香氣架構引導 (Scent Copilot)")
-    st.caption("從分子量 (MW)、CAS 唯一指紋與香氣特性出發。選定一支今日主角原料，系統將為您推導出平衡互補的起手共鳴骨架。")
+    st.caption("從分子量 (MW)、CAS 唯一指紋出發，搭配目標情境風格，自動生成 5.00g 實驗室微量打樣平衡骨架。")
 
     col_hero_l, col_hero_r = st.columns([1.2, 1.8])
 
     with col_hero_l:
-        st.subheader("選擇主角核心 (Hero Material)")
+        st.subheader("1. 選擇主角核心 (Hero Material)")
         hero_options = list(MASTER_LIBRARY.keys())
         selected_hero = st.selectbox(
             "原料庫清單 (支援 CAS / 名稱)", hero_options,
             format_func=lambda x: f"[{MASTER_LIBRARY[x].get('cas', 'N/A')}] {MASTER_LIBRARY[x]['name_cn']} ({MASTER_LIBRARY[x]['note']})"
         )
 
-        advisory_res = generate_smart_advisory(selected_hero, MASTER_LIBRARY)
+        st.subheader("2. 設定情境風格 (Scenario Vibe)")
+        selected_style = st.selectbox(
+            "選擇氣味風格偏好",
+            ["🌿 清冷雨林/冷杉木質", "☀️ 暖陽地中海/柑橘", "🌹 絲絨法式/東方花香", "🌊 現代極簡/礦物微風"]
+        )
+
+        advisory_res = generate_smart_advisory(selected_hero, selected_style, MASTER_LIBRARY)
         hero_meta = MASTER_LIBRARY[selected_hero]
 
         st.markdown(f"""
@@ -155,7 +166,7 @@ with t_adv:
             <h4 style="margin:0; color:#1E293B;">{advisory_res['hero_name']}</h4>
             <div style="margin: 6px 0;">
                 <span style="background:{advisory_res['tier_color']}; color:white; padding:2px 8px; border-radius:4px; font-size:12px;">{advisory_res['tier_cn']}</span>
-                <span class="cas-tag" style="margin-left:8px;">CAS: {hero_meta.get('cas', '-')}</span>
+                <span class="cas-badge" style="margin-left:8px;">CAS: {hero_meta.get('cas', '-')}</span>
                 <span style="color:#64748B; font-size:13px; margin-left:8px;">🧬 MW: {advisory_res['mw']}</span>
             </div>
             <p style="color:#475569; font-style:italic; font-size:13px; margin: 8px 0;">"{advisory_res['poetic']}"</p>
@@ -164,13 +175,13 @@ with t_adv:
 
         if st.button("✨ 注入此共鳴骨架至當前工作台", type="primary", use_container_width=True):
             st.session_state.mods[st.session_state.active_mod] = advisory_res["starter_formula"]
-            st.session_state.mod_notes[st.session_state.active_mod] = f"以 {advisory_res['hero_name']} (CAS: {hero_meta.get('cas', '-')}) 為主角建立的共鳴骨架。"
+            st.session_state.mod_notes[st.session_state.active_mod] = f"以 {advisory_res['hero_name']} 為主角，設定風格為【{selected_style}】之起手骨架。"
             st.success(f"已成功注入 {st.session_state.active_mod}！請切換至 Tab 2 開始微調。")
             st.rerun()
 
     with col_hero_r:
         st.subheader("💡 系統推導建議路徑與共鳴理由")
-        st.markdown("系統依據化學揮發速率與分子吸引力，針對該主角自動計算之黃金互補架構：")
+        st.markdown(f"系統依據化學揮發速率，針對【{selected_style}】自動計算之稀釋黃金架構：")
         for idx, item in enumerate(advisory_res["rationale"], 1):
             st.markdown(f"**{idx}.** {item}")
 
@@ -179,32 +190,31 @@ with t_adv:
         preview_rows = []
         for mid, d in advisory_res["starter_formula"].items():
             preview_rows.append({
-                "CAS 號碼": MASTER_LIBRARY[mid].get("cas", "-"),
+                "CAS": MASTER_LIBRARY[mid].get("cas", "-"),
                 "原料名稱": MASTER_LIBRARY[mid]["name_cn"],
                 "香階": MASTER_LIBRARY[mid]["note"],
-                "預設克數 (0.00g)": f"{d['gross_g']:.2f} g",
+                "建議秤重": f"{d['gross_g']:.2f} g",
                 "稀釋規格": f"{d['dilution_pct']:.0f}% in {d['solvent'].split(' ')[0]}"
             })
         st.dataframe(pd.DataFrame(preview_rows), hide_index=True, use_container_width=True)
 
 # ==============================================================================
-# TAB 2: 動態配方工作台 (Atelier - CAS / 名稱雙向搜尋與卡片標註)
+# TAB 2: 調香師即時秤重母表 (Compounding Master Sheet)
 # ==============================================================================
 with t_atelier:
-    st.markdown(f"### 🎨 配方工作室：<span class='mod-pill'>{st.session_state.active_mod}</span>", unsafe_allow_html=True)
-    st.caption("僅列出當前配方選用之原料。支援 CAS 號碼搜尋、0.00g 精確進位、稀釋度拆解與即時 IFRA 紅綠燈提示。")
+    st.markdown(f"### 📋 調香師即時秤重母表：<span class='mod-pill'>{st.session_state.active_mod}</span>", unsafe_allow_html=True)
+    st.caption("依工業標準投料順序排列（後調定香先投 ➔ 中調 ➔ 高揮發前調）。右側提供天平累計秤重，精準掌握每次下滴停秤點。")
 
-    # 支援 CAS 號碼模糊比對搜尋
+    # 頂部：搜尋並添加新原料
     available_to_add = [k for k in MASTER_LIBRARY.keys() if k not in current_formula]
-
-    col_add_sel, col_add_btn = st.columns([3.5, 1])
-    with col_add_sel:
+    c_add_sel, c_add_btn = st.columns([3.5, 1])
+    with c_add_sel:
         to_add_id = st.selectbox(
-            "➕ 依【CAS 號碼】或【原料名稱】搜尋並加入配方：",
-            ["-- 輸入 CAS 號碼 (如 54464-57-2) 或原料名稱搜尋 --"] + available_to_add,
+            "➕ 從原料庫搜尋並加入配方：",
+            ["-- 依 CAS 號碼或原料名稱搜尋 --"] + available_to_add,
             format_func=lambda x: x if x.startswith("--") else f"[{MASTER_LIBRARY[x].get('cas', 'N/A')}] {MASTER_LIBRARY[x]['name_cn']} | {MASTER_LIBRARY[x]['family']} ({MASTER_LIBRARY[x]['note']})"
         )
-    with col_add_btn:
+    with c_add_btn:
         st.write("")
         if st.button("加入配方", use_container_width=True) and not to_add_id.startswith("--"):
             m_def = MASTER_LIBRARY[to_add_id]
@@ -217,76 +227,105 @@ with t_atelier:
 
     st.divider()
 
-    # 動態原料清單
-    if not current_formula:
-        st.info("👈 當前工作台尚無原料。請於上方搜尋並加入原料，或前往 Tab 1 由智慧導航注入起手骨架。")
+    if not sheet_rows:
+        st.info("👈 當前配方為空。請於上方搜尋加入原料，或前往 Tab 1 由智慧導航注入起手骨架。")
     else:
+        # 表頭欄位
+        hdr_cols = st.columns([0.6, 2.5, 1.4, 1.5, 1.5, 1.5, 1.2, 0.6])
+        hdr_cols[0].markdown("**順序**")
+        hdr_cols[1].markdown("**原料名稱與 CAS**")
+        hdr_cols[2].markdown("**濃度規格**")
+        hdr_cols[3].markdown("**溶劑載體**")
+        hdr_cols[4].markdown("**本次投料 (g)**")
+        hdr_cols[5].markdown("**天平累計 (g)**")
+        hdr_cols[6].markdown("**IFRA 狀態**")
+        hdr_cols[7].markdown("**操作**")
+
         updated_formula = {}
         to_delete = None
 
-        for ing_id, data in current_formula.items():
+        for row in sheet_rows:
+            ing_id = row["ing_id"]
             m = MASTER_LIBRARY[ing_id]
-            cas_no = m.get("cas", "-")
+            r_cols = st.columns([0.6, 2.5, 1.4, 1.5, 1.5, 1.5, 1.2, 0.6])
 
-            # 即時法規狀態徽章
-            badge_html = "<span class='ifra-badge-safe'>✅ IFRA SAFE</span>"
+            # 1. 順序編號
+            r_cols[0].markdown(f"**#{row['seq']}**\n`{row['note']}`")
+
+            # 2. 原料名稱與 CAS
+            r_cols[1].markdown(f"**{row['name_cn']}**\n<span class='cas-badge'>CAS: {row['cas']}</span>", unsafe_allow_html=True)
+
+            # 3. 濃度規格 (行內編輯)
+            dil_opts = DILUTION_TIERS
+            new_dil = r_cols[2].selectbox(
+                "濃度", dil_opts,
+                index=dil_opts.index(float(row["dilution_pct"])) if float(row["dilution_pct"]) in dil_opts else 0,
+                key=f"sh_d_{st.session_state.active_mod}_{ing_id}", label_visibility="collapsed"
+            )
+
+            # 4. 溶劑載體 (行內編輯)
+            new_sol = r_cols[3].selectbox(
+                "溶劑", SOLVENT_CHOICES,
+                index=SOLVENT_CHOICES.index(row["solvent"]) if row["solvent"] in SOLVENT_CHOICES else 0,
+                key=f"sh_s_{st.session_state.active_mod}_{ing_id}", label_visibility="collapsed"
+            )
+
+            # 5. 本次投料目標 (行內編輯)
+            new_g = r_cols[4].number_input(
+                "投料", min_value=0.01, max_value=50.00,
+                value=float(row["gross_g"]), step=0.05, format="%.2f",
+                key=f"sh_g_{st.session_state.active_mod}_{ing_id}", label_visibility="collapsed"
+            )
+
+            # 6. 天平累計目標 (Running Total)
+            r_cols[5].markdown(f"<span class='scale-chip'>⚖️ {row['cumulative_g']:.2f} g</span>", unsafe_allow_html=True)
+
+            # 7. IFRA 狀態
+            status_html = "<span class='ifra-badge-safe'>PASS</span>"
             if ing_id in rt_calc["ifra_status"]:
-                st_info = rt_calc["ifra_status"][ing_id]
-                risk = st_info["risk_ratio"]
+                risk = rt_calc["ifra_status"][ing_id]["risk_ratio"]
                 if risk > 1.0:
-                    badge_html = f"<span class='ifra-badge-danger'>🚨 IFRA 超標 ({risk*100:.0f}%)</span>"
+                    status_html = f"<span class='ifra-badge-danger'>超標 {risk*100:.0f}%</span>"
                 elif risk > 0.8:
-                    badge_html = f"<span class='ifra-badge-warn'>⚠️ 逼近上限 ({risk*100:.0f}%)</span>"
+                    status_html = f"<span class='ifra-badge-warn'>警戒 {risk*100:.0f}%</span>"
+            r_cols[6].markdown(status_html, unsafe_allow_html=True)
 
-            # 單一原料卡片列
-            st.markdown(
-                f"**{m['name_cn']}** <span class='cas-tag'>CAS: {cas_no}</span> `{m['note']}` | `{m['family']}` {badge_html}",
-                unsafe_allow_html=True
-            )
-
-            c_g, c_dil, c_sol, c_del = st.columns([1.5, 1.2, 1.5, 0.6])
-
-            new_g = c_g.number_input(
-                "秤重 (g)", min_value=0.01, max_value=50.00,
-                value=float(data["gross_g"]), step=0.05, format="%.2f",
-                key=f"at_g_{st.session_state.active_mod}_{ing_id}"
-            )
-            new_dil = c_dil.selectbox(
-                "濃度 %", [100.0, 50.0, 20.0, 10.0, 1.0],
-                index=[100.0, 50.0, 20.0, 10.0, 1.0].index(float(data["dilution_pct"])),
-                key=f"at_d_{st.session_state.active_mod}_{ing_id}"
-            )
-            new_sol = c_sol.selectbox(
-                "載體溶劑", SOLVENT_CHOICES,
-                index=SOLVENT_CHOICES.index(data["solvent"]) if data["solvent"] in SOLVENT_CHOICES else 0,
-                key=f"at_s_{st.session_state.active_mod}_{ing_id}"
-            )
-            with c_del:
-                st.write("")
-                if st.button("🗑️", key=f"del_{st.session_state.active_mod}_{ing_id}"):
+            # 8. 刪除
+            with r_cols[7]:
+                if st.button("🗑️", key=f"sh_del_{st.session_state.active_mod}_{ing_id}"):
                     to_delete = ing_id
 
             updated_formula[ing_id] = {"gross_g": new_g, "dilution_pct": new_dil, "solvent": new_sol}
-            st.divider()
 
-        # 處理刪除邏輯
         if to_delete:
             del st.session_state.mods[st.session_state.active_mod][to_delete]
             st.rerun()
 
-        # 數值變更重整
-        if updated_formula != current_formula:
+        # 檢查是否有數值變更，避免無謂的重新渲染
+        has_changed = False
+        if set(updated_formula.keys()) != set(current_formula.keys()):
+            has_changed = True
+        else:
+            for k, v in updated_formula.items():
+                curr = current_formula[k]
+                if (abs(v["gross_g"] - curr["gross_g"]) > 1e-4 or
+                    abs(v["dilution_pct"] - curr["dilution_pct"]) > 1e-4 or
+                    v["solvent"] != curr["solvent"]):
+                    has_changed = True
+                    break
+
+        if has_changed:
             st.session_state.mods[st.session_state.active_mod] = updated_formula
             st.rerun()
 
 # ==============================================================================
-# TAB 3: 氣味建築 (Architecture - 風味輪、雷達與盲測筆記)
+# TAB 3: 氣味建築 (Architecture)
 # ==============================================================================
 with t_arch:
     st.header("📐 氣味建築與感官盲測 (Scent Architecture)")
 
     if not mod_calc:
-        st.warning("⚠️ 請先於工作台輸入原料。")
+        st.warning("⚠️ 請先於母表中輸入原料秤重。")
     else:
         cw1, cw2 = st.columns([1.6, 1])
         with cw1:
