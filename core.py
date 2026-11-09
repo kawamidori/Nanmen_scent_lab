@@ -1,5 +1,4 @@
 # core.py
-import json
 import math
 import numpy as np
 import pandas as pd
@@ -9,14 +8,14 @@ from config import (
     IFRA_WARN_RATIO,
     IFRA_DANGER_RATIO,
     FIXATIVE_DRAG_BASE_FACTOR,
-    EVAPORATION_RATES,
-    VAULT_FILE
+    EVAPORATION_RATES
 )
 
-def generate_smart_advisory(hero_id, meta_lib):
+def generate_smart_advisory(hero_id, style_tag, meta_lib):
     """
-    【智慧香氣架構引導引擎】
-    依主角原料的分子量 (MW) 與香階調性，推導出黃金平衡起手骨架
+    【四維情境風格共鳴引擎】
+    結合「主角原料 (Hero Material)」與「情境風格 (Scenario Vibe)」，
+    採用真實實驗室稀釋規格 (10%~50%)，自動構建 5.00g 微量打樣骨架。
     """
     hero = meta_lib.get(hero_id)
     if not hero:
@@ -25,7 +24,6 @@ def generate_smart_advisory(hero_id, meta_lib):
     mw = hero.get("mol_w", 180.0)
     note = hero.get("note", "Mid")
 
-    # 依 config.py 定義之分子量區間判定調性
     if mw < MW_TIERS["TOP_MAX"] or "Top" in note:
         tier_cn, tier_color = "前調 (Top)", "#10B981"
     elif mw < MW_TIERS["MID_MAX"] or "Mid" in note:
@@ -33,29 +31,60 @@ def generate_smart_advisory(hero_id, meta_lib):
     else:
         tier_cn, tier_color = "後調 (Base)", "#78350F"
 
-    starter_formula = {
+    # 主角起手克數 (在 5.00g 總重中約佔 0.50g ~ 0.80g 稀釋液)
+    starter = {
         hero_id: {
-            "gross_g": 0.80,
+            "gross_g": 0.60,
             "dilution_pct": hero["default_dilution"],
             "solvent": hero["default_solvent"]
         }
     }
-    rationale = []
+    rationale = [f"以 {hero['name_cn']} 為核心主幹（配置 {hero['default_dilution']:.0f}% 實驗室稀釋液避免氣味暴衝）"]
 
-    # 1. 空間擴散橋樑 (Hedione)
-    if hero_id != "hedione":
-        starter_formula["hedione"] = {"gross_g": 1.20, "dilution_pct": 100.0, "solvent": "None (100%純原液)"}
-        rationale.append("配置 Hedione (二氫茉莉酮酸甲酯) 作為立體空間擴散橋樑")
+    # 依情境風格動態注入互補分子
+    if "清冷雨林" in style_tag:
+        if hero_id != "iso_e_super":
+            starter["iso_e_super"] = {"gross_g": 1.20, "dilution_pct": 50.0, "solvent": "DPG (二丙二醇)"}
+            rationale.append("注入 Iso E Super (50% DPG) 鋪墊冷冽雪松與濕潤樹皮基底")
+        if hero_id != "pink_pepper":
+            starter["pink_pepper"] = {"gross_g": 0.40, "dilution_pct": 20.0, "solvent": "DPG (二丙二醇)"}
+            rationale.append("搭配粉紅胡椒 (20% DPG) 營造林間清晨水氣與微辛氣泡感")
+        if hero_id != "hedione":
+            starter["hedione"] = {"gross_g": 1.00, "dilution_pct": 50.0, "solvent": "DPG (二丙二醇)"}
+            rationale.append("配置 Hedione (50% DPG) 展開雨林通透的空間穿透力")
 
-    # 2. 絲絨定香底色 (Iso E Super)
-    if "Base" not in note and hero_id != "iso_e_super":
-        starter_formula["iso_e_super"] = {"gross_g": 1.50, "dilution_pct": 100.0, "solvent": "None (100%純原液)"}
-        rationale.append("配置 Iso E Super (龍涎酮) 提供絲絨木質親膚定香底色")
+    elif "暖陽柑橘" in style_tag:
+        if hero_id != "sweet_orange":
+            starter["sweet_orange"] = {"gross_g": 1.20, "dilution_pct": 50.0, "solvent": "DPG (二丙二醇)"}
+            rationale.append("鋪陳義大利甜橙 (50% DPG) 帶來充沛的果肉甜美暖陽感")
+        if hero_id != "bergamot_fcf":
+            starter["bergamot_fcf"] = {"gross_g": 0.80, "dilution_pct": 50.0, "solvent": "DPG (二丙二醇)"}
+            rationale.append("調和無光敏佛手柑 (50% DPG) 賦予精緻伯爵茶清香")
+        if hero_id != "musk_t":
+            starter["musk_t"] = {"gross_g": 0.80, "dilution_pct": 20.0, "solvent": "DPG (二丙二醇)"}
+            rationale.append("注入白麝香 T (20% DPG) 作為日光曬過織物的柔軟貼膚結尾")
 
-    # 3. 高揮發破繭柑橘 (Sweet Orange)
-    if "Top" not in note and hero_id != "sweet_orange":
-        starter_formula["sweet_orange"] = {"gross_g": 1.00, "dilution_pct": 100.0, "solvent": "None (100%純原液)"}
-        rationale.append("搭配義大利甜橙作為清脆開場，喚醒前調嗅覺注意")
+    elif "絲絨東方" in style_tag:
+        if hero_id != "damask_rose_abs":
+            starter["damask_rose_abs"] = {"gross_g": 0.50, "dilution_pct": 10.0, "solvent": "TEC (檸檬酸三乙酯)"}
+            rationale.append("微量注入大馬士革玫瑰 (10% TEC) 點綴深邃蜜香花瓣")
+        if hero_id != "patchouli":
+            starter["patchouli"] = {"gross_g": 0.60, "dilution_pct": 20.0, "solvent": "TEC (檸檬酸三乙酯)"}
+            rationale.append("配置廣藿香 (20% TEC) 錨定古老泥土根系與陳香東方厚度")
+        if hero_id != "iso_e_super":
+            starter["iso_e_super"] = {"gross_g": 1.20, "dilution_pct": 50.0, "solvent": "DPG (二丙二醇)"}
+            rationale.append("搭配龍涎酮 (50% DPG) 融合花香與木質，避免沉悶")
+
+    else:  # 現代極簡 / 礦物微風
+        if hero_id != "hedione":
+            starter["hedione"] = {"gross_g": 1.50, "dilution_pct": 50.0, "solvent": "DPG (二丙二醇)"}
+            rationale.append("大量配置 Hedione (50% DPG) 創造透明空靈微風感")
+        if hero_id != "iso_e_super":
+            starter["iso_e_super"] = {"gross_g": 1.50, "dilution_pct": 50.0, "solvent": "DPG (二丙二醇)"}
+            rationale.append("大量鋪陳龍涎酮 (50% DPG) 營造現代沙龍標誌性的偽體香光環")
+        if hero_id != "citral_syn":
+            starter["citral_syn"] = {"gross_g": 0.20, "dilution_pct": 10.0, "solvent": "DPG (二丙二醇)"}
+            rationale.append("極微量檸檬醛 (10% DPG) 點亮極簡骨架中的清脆俐落線條")
 
     return {
         "hero_id": hero_id,
@@ -64,15 +93,58 @@ def generate_smart_advisory(hero_id, meta_lib):
         "tier_color": tier_color,
         "mw": mw,
         "poetic": hero.get("poetic", ""),
-        "starter_formula": starter_formula,
+        "starter_formula": starter,
         "rationale": rationale
     }
 
+def build_compounding_sheet(formula_inputs, dosage_ratio, meta_lib):
+    """
+    【調香師天平即時秤重母表引擎】
+    依標準投料 SOP 排序 (定香後調 -> 核心中調 -> 高揮發前調)，
+    計算每個原料的單項目標克數、純原油克數、以及最關鍵的「天平累計目標 (Cumulative g)」。
+    """
+    items = []
+    for ing_id, data in formula_inputs.items():
+        if ing_id not in meta_lib or data["gross_g"] <= 0:
+            continue
+        m = meta_lib[ing_id]
+        dil = data["dilution_pct"] / 100.0
+        active_g = data["gross_g"] * dil
+        carrier_g = data["gross_g"] * (1.0 - dil)
+
+        # 投料優先級 (1: Base 樹脂木質先入杯, 2: Mid, 3: Top 最快揮發最後加)
+        priority = 1 if "Base" in m["note"] else 2 if "Mid" in m["note"] else 3
+
+        items.append({
+            "ing_id": ing_id,
+            "priority": priority,
+            "cas": m.get("cas", "-"),
+            "name_cn": m["name_cn"],
+            "note": m["note"],
+            "family": m["family"],
+            "dilution_pct": data["dilution_pct"],
+            "solvent": data["solvent"],
+            "gross_g": data["gross_g"],
+            "active_g": active_g,
+            "carrier_g": carrier_g
+        })
+
+    # 排序：後調先秤，前調後秤
+    items.sort(key=lambda x: (x["priority"], x["name_cn"]))
+
+    # 計算累計天平讀數 (Cumulative Scale Tare)
+    running_total = 0.0
+    for idx, row in enumerate(items, 1):
+        running_total += row["gross_g"]
+        row["seq"] = idx
+        row["cumulative_g"] = round(running_total, 2)
+        row["gross_g"] = round(row["gross_g"], 2)
+        row["active_g"] = round(row["active_g"], 3)
+
+    return items
+
 def analyze_formula_realtime(formula_inputs, dosage_ratio, meta_lib):
-    """
-    【即時法規哨兵】
-    支援 CAS 穿透累計計算，即時計算在成品皮膚濃度下的 IFRA Cat 4 風險比
-    """
+    """即時法規哨兵：CAS 穿透聚合計算"""
     total_active_g = 0.0
     active_details = {}
 
@@ -87,8 +159,6 @@ def analyze_formula_realtime(formula_inputs, dosage_ratio, meta_lib):
         return {"total_active_g": 0.0, "total_gross_g": 0.0, "ifra_status": {}}
 
     total_gross = sum([d["gross_g"] for d in formula_inputs.values()])
-
-    # 跨原料 CAS 分子聚合加總
     cas_mass_aggregation = {}
     for ing_id, act_g in active_details.items():
         cas_no = meta_lib[ing_id].get("cas", "-")
@@ -99,7 +169,6 @@ def analyze_formula_realtime(formula_inputs, dosage_ratio, meta_lib):
         m = meta_lib[ing_id]
         cas_no = m.get("cas", "-")
         limit = m.get("ifra_cat4_max", 100.0)
-
         aggregated_act_g = cas_mass_aggregation.get(cas_no, act_g)
         finished_pct = (aggregated_act_g / total_active_g) * dosage_ratio * 100.0
         risk_ratio = finished_pct / limit if limit > 0 else 999.0
@@ -120,10 +189,7 @@ def analyze_formula_realtime(formula_inputs, dosage_ratio, meta_lib):
     }
 
 def calculate_mod_profile(formula_inputs, dosage_ratio, batch_target, meta_lib):
-    """
-    【Mod 全維度解析引擎】
-    產出純活性歸一化、香氣家族佔比、致敏原申報表、工廠 BMR 工單與 24h 動力學曲線
-    """
+    """Mod 全維度解析：風味輪、香調金字塔、致敏原、工廠 BMR 與 24h 動力學"""
     total_gross_g = sum([item["gross_g"] for item in formula_inputs.values()])
     if total_gross_g <= 0:
         return None
@@ -177,7 +243,6 @@ def calculate_mod_profile(formula_inputs, dosage_ratio, batch_target, meta_lib):
         fam = m["family"]
         family_pct[fam] = family_pct.get(fam, 0.0) + pct
 
-    # 歐盟法定致敏原累加 (終端成品 PPM)
     allergen_totals = {}
     for ing_id, item in norm_active.items():
         m = meta_lib[ing_id]
@@ -191,7 +256,6 @@ def calculate_mod_profile(formula_inputs, dosage_ratio, batch_target, meta_lib):
     ]
     declared_allergens.sort(key=lambda x: x["ppm"], reverse=True)
 
-    # ISO 22716 量產規格換算 (自動抵扣 Phase B 酒精)
     finished_density = (dosage_ratio * 0.95) + ((1.0 - dosage_ratio) * 0.835)
     total_batch_g = batch_target["bottles"] * batch_target["vol_ml"] * finished_density
     target_active_g = total_batch_g * dosage_ratio
@@ -212,7 +276,6 @@ def calculate_mod_profile(formula_inputs, dosage_ratio, batch_target, meta_lib):
         })
     bmr_rows.sort(key=lambda x: x["order"])
 
-    # 24h 動力學感官演變模擬 (引入 Fixative Drag)
     base_ratio = notes_pct["Base"] / 100.0
     drag = 1.0 - (base_ratio * FIXATIVE_DRAG_BASE_FACTOR)
     time_pts = np.linspace(0, 24, 49)
@@ -240,21 +303,3 @@ def calculate_mod_profile(formula_inputs, dosage_ratio, batch_target, meta_lib):
         "bmr_rows": bmr_rows,
         "trajectory": pd.DataFrame(traj)
     }
-
-def append_to_data_vault(record: dict):
-    """將特徵向量快照寫入本地 JSONL 數據庫"""
-    with open(VAULT_FILE, "a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-def read_vault_records():
-    """讀取本地累積之配方訓練數據"""
-    records = []
-    if VAULT_FILE.exists():
-        with open(VAULT_FILE, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
-                    try:
-                        records.append(json.loads(line))
-                    except Exception:
-                        pass
-    return records
