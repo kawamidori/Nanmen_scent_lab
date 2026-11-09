@@ -4,11 +4,59 @@ import numpy as np
 import pandas as pd
 from config import EU_ALLERGEN_THRESHOLD_PPM
 
+def generate_smart_advisory(hero_id, meta_lib):
+    """
+    【智慧香氣共鳴引擎】
+    依據主角的分子量 (MW)、調性與家族，自動推導互補的前、中、後平衡共鳴骨架
+    """
+    hero = meta_lib.get(hero_id)
+    if not hero:
+        return None
+
+    mw = hero.get("mol_w", 180.0)
+    note = hero.get("note", "Mid")
+    family = hero.get("family", "Floral")
+
+    # 分子量調性判定
+    if mw < 150 or "Top" in note:
+        tier_cn, tier_color = "前調 (Top)", "#10B981"
+    elif 150 <= mw < 210 or "Mid" in note:
+        tier_cn, tier_color = "中調 (Heart)", "#F59E0B"
+    else:
+        tier_cn, tier_color = "後調 (Base)", "#78350F"
+
+    # 智慧共鳴骨幹推薦邏輯
+    blueprint = {hero_id: {"gross_g": 0.80, "dilution_pct": hero["default_dilution"], "solvent": hero["default_solvent"]}}
+    rationale = []
+
+    # 1. 補齊擴散橋樑 (Heart Floral / Diffusive)
+    if hero_id != "hedione":
+        blueprint["hedione"] = {"gross_g": 1.20, "dilution_pct": 100.0, "solvent": "None (100%純原液)"}
+        rationale.append("注入 Hedione (二氫茉莉酮酸甲酯) 作為立體空間擴散橋樑")
+
+    # 2. 若主角非後調，自動配置絲絨定香後調
+    if "Base" not in note and hero_id != "iso_e_super":
+        blueprint["iso_e_super"] = {"gross_g": 1.50, "dilution_pct": 100.0, "solvent": "None (100%純原液)"}
+        rationale.append("配置 Iso E Super (龍涎酮) 提供絲絨木質親膚定香底色")
+
+    # 3. 若主角非前調，自動配置高揮發破繭柑橘
+    if "Top" not in note and hero_id != "sweet_orange":
+        blueprint["sweet_orange"] = {"gross_g": 1.00, "dilution_pct": 100.0, "solvent": "None (100%純原液)"}
+        rationale.append("搭配義大利甜橙作為清脆開場，喚醒前調嗅覺注意")
+
+    return {
+        "hero_id": hero_id,
+        "hero_name": hero["name_cn"],
+        "tier_cn": tier_cn,
+        "tier_color": tier_color,
+        "mw": mw,
+        "poetic": hero.get("poetic", ""),
+        "starter_formula": blueprint,
+        "rationale": rationale
+    }
+
 def analyze_formula_realtime(formula_inputs, dosage_ratio, meta_lib):
-    """
-    【即時法規哨兵】
-    即時計算當前 Mod 的純原油總重與各原料在成品中的 IFRA Cat 4 風險比
-    """
+    """即時法規哨兵：計算各原料在終端皮膚接觸下的 IFRA Cat 4 風險比"""
     total_active_g = 0.0
     active_details = {}
 
@@ -20,9 +68,11 @@ def analyze_formula_realtime(formula_inputs, dosage_ratio, meta_lib):
             active_details[ing_id] = active_g
 
     if total_active_g <= 0:
-        return {"total_active_g": 0.0, "ifra_status": {}}
+        return {"total_active_g": 0.0, "total_gross_g": 0.0, "ifra_status": {}}
 
+    total_gross = sum([d["gross_g"] for d in formula_inputs.values()])
     ifra_status = {}
+
     for ing_id, act_g in active_details.items():
         m = meta_lib[ing_id]
         limit = m.get("ifra_cat4_max", 100.0)
@@ -38,18 +88,12 @@ def analyze_formula_realtime(formula_inputs, dosage_ratio, meta_lib):
 
     return {
         "total_active_g": total_active_g,
+        "total_gross_g": total_gross,
         "ifra_status": ifra_status
     }
 
 def calculate_mod_profile(formula_inputs, dosage_ratio, batch_target, meta_lib):
-    """
-    【Mod 全維度解析引擎】
-    提供當前 Mod 的：
-    1. 雙層風味輪 (norm_active) 與五維能量雷達 (family_pct)
-    2. 香調金字塔比例 (notes_pct) 與 24h 感官演變軌跡 (trajectory)
-    3. 成品真實致敏原 PPM 檢驗
-    4. ISO 22716 商業放大 BMR 投料工單 (自動抵扣 Phase B 酒精)
-    """
+    """Mod 全維度解析：風味輪、香調金字塔、致敏原、工廠 BMR 與 24h 動力學"""
     total_gross_g = sum([item["gross_g"] for item in formula_inputs.values()])
     if total_gross_g <= 0:
         return None
@@ -83,7 +127,6 @@ def calculate_mod_profile(formula_inputs, dosage_ratio, batch_target, meta_lib):
     if total_active_g <= 0:
         return None
 
-    # 純活性原液 100% 歸一化、香階與家族佔比
     norm_active = {}
     notes_pct = {"Top": 0.0, "Mid": 0.0, "Base": 0.0}
     family_pct = {}
@@ -101,7 +144,6 @@ def calculate_mod_profile(formula_inputs, dosage_ratio, batch_target, meta_lib):
         fam = m["family"]
         family_pct[fam] = family_pct.get(fam, 0.0) + pct
 
-    # 致敏原檢驗
     allergen_totals = {}
     for ing_id, item in norm_active.items():
         m = meta_lib[ing_id]
@@ -112,7 +154,6 @@ def calculate_mod_profile(formula_inputs, dosage_ratio, batch_target, meta_lib):
     declared_allergens = [{"name": k, "ppm": round(v, 1)} for k, v in allergen_totals.items() if v >= EU_ALLERGEN_THRESHOLD_PPM]
     declared_allergens.sort(key=lambda x: x["ppm"], reverse=True)
 
-    # ISO 22716 商業放大換算
     finished_density = (dosage_ratio * 0.95) + ((1.0 - dosage_ratio) * 0.835)
     total_batch_g = batch_target["bottles"] * batch_target["vol_ml"] * finished_density
     target_active_g = total_batch_g * dosage_ratio
@@ -133,7 +174,6 @@ def calculate_mod_profile(formula_inputs, dosage_ratio, batch_target, meta_lib):
         })
     bmr_rows.sort(key=lambda x: x["order"])
 
-    # 24h 感官演變軌跡模擬 (Fixative Drag)
     base_ratio = notes_pct["Base"] / 100.0
     drag = 1.0 - (base_ratio * 0.35)
     time_pts = np.linspace(0, 24, 49)
