@@ -7,15 +7,11 @@ from config import EU_ALLERGEN_THRESHOLD_PPM
 def analyze_formula_realtime(formula_inputs, dosage_ratio, meta_lib):
     """
     【即時法規哨兵】
-    專供「打樣實驗台 (Lab Bench)」使用，輕量化即時計算：
-    1. 當前活性總重
-    2. 每個原料在「終端成品」中的真實濃度
-    3. 距離 IFRA Cat 4 違規紅線的百分比 (0~100%+)
+    即時計算當前 Mod 的純原油總重與各原料在成品中的 IFRA Cat 4 風險比
     """
     total_active_g = 0.0
     active_details = {}
 
-    # 1. 計算總活性純質量
     for ing_id, data in formula_inputs.items():
         gross = data["gross_g"]
         if gross > 0 and ing_id in meta_lib:
@@ -27,15 +23,10 @@ def analyze_formula_realtime(formula_inputs, dosage_ratio, meta_lib):
         return {"total_active_g": 0.0, "ifra_status": {}}
 
     ifra_status = {}
-    # 2. 結算終端濃度與紅線警報
     for ing_id, act_g in active_details.items():
         m = meta_lib[ing_id]
         limit = m.get("ifra_cat4_max", 100.0)
-        
-        # 該原料在未來成品(香水)中的真實佔比
         finished_pct = (act_g / total_active_g) * dosage_ratio * 100.0
-        
-        # 危險指數 (0.0~1.0 為安全，>1.0 為超標)
         risk_ratio = finished_pct / limit if limit > 0 else 999.0
         
         ifra_status[ing_id] = {
@@ -50,11 +41,14 @@ def analyze_formula_realtime(formula_inputs, dosage_ratio, meta_lib):
         "ifra_status": ifra_status
     }
 
-def calculate_commercial_scaleup(formula_inputs, dosage_ratio, batch_target, meta_lib):
+def calculate_mod_profile(formula_inputs, dosage_ratio, batch_target, meta_lib):
     """
-    【商業放大量產閘門】
-    專供「量產結算」使用，執行全套 ISO 22716 工單抵扣、致敏原申報與動力學衰減。
-    (與上一版邏輯相同，專注於工廠交接)
+    【Mod 全維度解析引擎】
+    提供當前 Mod 的：
+    1. 雙層風味輪 (norm_active) 與五維能量雷達 (family_pct)
+    2. 香調金字塔比例 (notes_pct) 與 24h 感官演變軌跡 (trajectory)
+    3. 成品真實致敏原 PPM 檢驗
+    4. ISO 22716 商業放大 BMR 投料工單 (自動抵扣 Phase B 酒精)
     """
     total_gross_g = sum([item["gross_g"] for item in formula_inputs.values()])
     if total_gross_g <= 0:
@@ -86,21 +80,28 @@ def calculate_commercial_scaleup(formula_inputs, dosage_ratio, batch_target, met
         if carrier_g > 0 and "純原液" not in solvent:
             carrier_solvents[solvent] = carrier_solvents.get(solvent, 0.0) + carrier_g
 
-    if total_active_g <= 0: return None
+    if total_active_g <= 0:
+        return None
 
+    # 純活性原液 100% 歸一化、香階與家族佔比
     norm_active = {}
     notes_pct = {"Top": 0.0, "Mid": 0.0, "Base": 0.0}
-    
+    family_pct = {}
+
     for ing_id, act_info in active_compounds.items():
         m = meta_lib[ing_id]
         pct = (act_info["active_g"] / total_active_g) * 100.0
-        norm_active[ing_id] = {**act_info, "active_pct": pct}
+        norm_active[ing_id] = {**act_info, "active_pct": pct, "name_cn": m["name_cn"], "family": m["family"]}
         
         note = m["note"]
         if "Top" in note: notes_pct["Top"] += pct * (0.5 if "-" in note else 1.0)
         if "Mid" in note: notes_pct["Mid"] += pct * (0.5 if "-" in note else 1.0)
         if "Base" in note: notes_pct["Base"] += pct * (0.5 if "-" in note else 1.0)
 
+        fam = m["family"]
+        family_pct[fam] = family_pct.get(fam, 0.0) + pct
+
+    # 致敏原檢驗
     allergen_totals = {}
     for ing_id, item in norm_active.items():
         m = meta_lib[ing_id]
@@ -111,7 +112,7 @@ def calculate_commercial_scaleup(formula_inputs, dosage_ratio, batch_target, met
     declared_allergens = [{"name": k, "ppm": round(v, 1)} for k, v in allergen_totals.items() if v >= EU_ALLERGEN_THRESHOLD_PPM]
     declared_allergens.sort(key=lambda x: x["ppm"], reverse=True)
 
-    # 商業放大換算 (Phase A/B/C)
+    # ISO 22716 商業放大換算
     finished_density = (dosage_ratio * 0.95) + ((1.0 - dosage_ratio) * 0.835)
     total_batch_g = batch_target["bottles"] * batch_target["vol_ml"] * finished_density
     target_active_g = total_batch_g * dosage_ratio
@@ -132,7 +133,7 @@ def calculate_commercial_scaleup(formula_inputs, dosage_ratio, batch_target, met
         })
     bmr_rows.sort(key=lambda x: x["order"])
 
-    # 感官衰減
+    # 24h 感官演變軌跡模擬 (Fixative Drag)
     base_ratio = notes_pct["Base"] / 100.0
     drag = 1.0 - (base_ratio * 0.35)
     time_pts = np.linspace(0, 24, 49)
@@ -148,7 +149,9 @@ def calculate_commercial_scaleup(formula_inputs, dosage_ratio, batch_target, met
             traj["Top"].append(0); traj["Mid"].append(0); traj["Base"].append(100)
 
     return {
+        "norm_active": norm_active,
         "notes_pct": notes_pct,
+        "family_pct": family_pct,
         "cost_per_g_active": round(total_cost / total_active_g, 2),
         "declared_allergens": declared_allergens,
         "batch": {"total_g": total_batch_g, "alcohol_g": net_alcohol_g, "carrier_solvents": carrier_solvents},
