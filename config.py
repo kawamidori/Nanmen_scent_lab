@@ -2,7 +2,7 @@
 from pathlib import Path
 
 # ==============================================================================
-# 1. 檔案路徑與資料飛輪配置
+# 1. 檔案路徑與資料庫配置
 # ==============================================================================
 BASE_DIR = Path(__file__).resolve().parent
 VAULT_FILE = BASE_DIR / "formula_data_vault.jsonl"
@@ -10,11 +10,9 @@ VAULT_FILE = BASE_DIR / "formula_data_vault.jsonl"
 # ==============================================================================
 # 2. 全球法規與安全警戒標準 (Regulatory & IFRA Sentinels)
 # ==============================================================================
-# 歐盟化妝品法規 (EC 1223/2009) 規定：留香型 (Leave-on) 致敏原超過 10 ppm (0.001%) 強制標示
 EU_ALLERGEN_THRESHOLD_PPM = 10.0
 EU_ALLERGEN_THRESHOLD_RATIO = 0.00001
 
-# IFRA Cat 4 (人體香水) 即時動態哨兵警戒線
 IFRA_WARN_RATIO = 0.80   # 達到上限 80% 觸發黃燈預警
 IFRA_DANGER_RATIO = 1.00 # 超過上限 100% 觸發紅燈違規
 
@@ -29,16 +27,13 @@ PERFUME_CONCENTRATION_PRESETS = {
     "Extrait de Parfum - 25% (頂級沙龍高濃度)": 0.25
 }
 
-# 預設打樣目標濃度
 DEFAULT_TARGET_TIER = "Eau de Parfum (EdP) - 15% (商業主力推薦)"
 
 # ==============================================================================
-# 4. 稀釋度標準梯度與溶劑載體資料庫 (Dilutions & Carrier Solvents)
+# 4. 稀釋度標準與載體溶劑規格庫 (Dilutions & Carrier Solvents)
 # ==============================================================================
-# 調香工作台支援的標準稀釋百分比
 DILUTION_TIERS = [100.0, 50.0, 20.0, 10.0, 1.0]
 
-# 工業標準載體溶劑規格庫 (含法定 CAS 號碼與比重 Specific Gravity)
 SOLVENT_DATABASE = {
     "None (100%純原液)": {
         "cas": "-", "sg": 1.000, "desc": "未稀釋之純單體或精油原液"
@@ -57,12 +52,24 @@ SOLVENT_DATABASE = {
     }
 }
 
-# 供前端下拉選單直接調用的清單
 SOLVENT_CHOICES = list(SOLVENT_DATABASE.keys())
 
 # ==============================================================================
 # 5. 智慧調香導航門檻 (Advisory Molecular Weight Tiers)
 # ==============================================================================
-# 依據分子量 (Molecular Weight, g/mol) 判定揮發性與香階區間
 MW_TIERS = {
-    "TOP_MAX": 150.0,   # MW < 150:
+    "TOP_MAX": 150.0,
+    "MID_MAX": 210.0,
+    "BASE_MIN": 210.0
+}
+
+# ==============================================================================
+# 6. 動力學感官演變模擬常數 (Sensory Kinetics Constants)
+# ==============================================================================
+FIXATIVE_DRAG_BASE_FACTOR = 0.35
+
+EVAPORATION_RATES = {
+    "Top": 0.85,
+    "Mid": 0.22,
+    "Base": 0.04
+}
