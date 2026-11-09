@@ -189,3 +189,16 @@ MASTER_LIBRARY = {
         "allergens": {"Citral": 0.65, "Limonene": 0.15}, "ifra_cat4_max": 0.90
     }
 }
+# 加在 library.py 最底部
+# 建立 CAS 快速倒排索引：{"24851-98-7": "hedione", ...}
+CAS_INDEX = {
+    v["cas"]: k for k, v in MASTER_LIBRARY.items() if v.get("cas") and v["cas"] != "-"
+}
+
+def get_ingredient_by_cas(cas_number: str):
+    """透過 CAS 號碼反查內部原料 ID"""
+    clean_cas = cas_number.strip()
+    internal_id = CAS_INDEX.get(clean_cas)
+    if internal_id:
+        return internal_id, MASTER_LIBRARY[internal_id]
+    return None, None
