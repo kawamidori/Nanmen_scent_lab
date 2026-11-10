@@ -41,6 +41,9 @@ DEFAULT_TARGET_TIER = "Eau de Parfum (EdP) - 15% (商業主力推薦)"
 
 DILUTION_TIERS = [100.0, 50.0, 20.0, 10.0, 1.0]
 
+# 標準實驗室 1ml/3ml 巴斯德吸管單滴體積基準 (約 40 drops/ml)
+DROP_VOLUME_ML = 0.025
+
 SOLVENT_DATABASE = {
     "None (100%純原液)": {
         "cas": "-", "sg": 1.000, "desc": "未稀釋之純單體或精油原液"
