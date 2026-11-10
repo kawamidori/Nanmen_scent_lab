@@ -1,24 +1,34 @@
 # config.py
 from pathlib import Path
 
-# ==============================================================================
-# 1. 檔案路徑與資料庫配置
-# ==============================================================================
 BASE_DIR = Path(__file__).resolve().parent
 VAULT_FILE = BASE_DIR / "formula_data_vault.jsonl"
 
-# ==============================================================================
-# 2. 全球法規與安全警戒標準 (Regulatory & IFRA Sentinels)
-# ==============================================================================
 EU_ALLERGEN_THRESHOLD_PPM = 10.0
 EU_ALLERGEN_THRESHOLD_RATIO = 0.00001
 
-IFRA_WARN_RATIO = 0.80   # 達到上限 80% 觸發黃燈預警
-IFRA_DANGER_RATIO = 1.00 # 超過上限 100% 觸發紅燈違規
+IFRA_WARN_RATIO = 0.80
+IFRA_DANGER_RATIO = 1.00
 
-# ==============================================================================
-# 3. 商業賦香率標準 (Concentration Tiers)
-# ==============================================================================
+# 全球三大區域法規標準
+REGULATORY_REGIONS = {
+    "EU (歐盟 EC 1223/2009 & IFRA 51st)": {
+        "code": "EU",
+        "allergen_ppm_threshold": 10.0,
+        "desc": "全球最嚴苛標準，26/56 種過敏原強制外盒標示，嚴格遵守 IFRA 51st 限量規範。"
+    },
+    "TW (台灣衛福部 TFDA 化粧品法規)": {
+        "code": "TW",
+        "allergen_ppm_threshold": 10.0,
+        "desc": "依台灣衛福部化粧品成分標示規定，駐留型香精致敏原超過 10 ppm 須展開標示。"
+    },
+    "US (美國 FDA MoCRA)": {
+        "code": "US",
+        "allergen_ppm_threshold": 10.0,
+        "desc": "美國現代化粧品法案 (MoCRA)，要求致敏原全面揭露與產品安全佐證。"
+    }
+}
+
 PERFUME_CONCENTRATION_PRESETS = {
     "Eau de Cologne (EdC) - 5%": 0.05,
     "Eau de Toilette (EdT) - 10%": 0.10,
@@ -29,9 +39,6 @@ PERFUME_CONCENTRATION_PRESETS = {
 
 DEFAULT_TARGET_TIER = "Eau de Parfum (EdP) - 15% (商業主力推薦)"
 
-# ==============================================================================
-# 4. 稀釋度標準與載體溶劑規格庫 (Dilutions & Carrier Solvents)
-# ==============================================================================
 DILUTION_TIERS = [100.0, 50.0, 20.0, 10.0, 1.0]
 
 SOLVENT_DATABASE = {
@@ -54,18 +61,12 @@ SOLVENT_DATABASE = {
 
 SOLVENT_CHOICES = list(SOLVENT_DATABASE.keys())
 
-# ==============================================================================
-# 5. 智慧調香導航門檻 (Advisory Molecular Weight Tiers)
-# ==============================================================================
 MW_TIERS = {
     "TOP_MAX": 150.0,
     "MID_MAX": 210.0,
     "BASE_MIN": 210.0
 }
 
-# ==============================================================================
-# 6. 動力學感官演變模擬常數 (Sensory Kinetics Constants)
-# ==============================================================================
 FIXATIVE_DRAG_BASE_FACTOR = 0.35
 
 EVAPORATION_RATES = {
