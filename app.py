@@ -1,5 +1,6 @@
 app.py
 
+import copy
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -23,11 +24,7 @@ analyze_formula_realtime,
 calculate_mod_profile
 )
 
-==============================================================================
-
 0. 系統環境設定與客製化 CSS
-
-==============================================================================
 
 st.set_page_config(page_title="Global Fragrance OS | 國際工業級調香工作站", layout="wide", page_icon="✨")
 
@@ -35,11 +32,7 @@ st.markdown("""
 
 """, unsafe_allow_html=True)
 
-==============================================================================
-
 1. 狀態初始化與版本控制 (Modding System)
-
-==============================================================================
 
 if "lib_data" not in st.session_state:
 st.session_state.lib_data = load_master_library()
@@ -58,11 +51,7 @@ st.session_state.active_mod = "Mod 1"
 if "mod_notes" not in st.session_state:
 st.session_state.mod_notes = {"Mod 1": "初始版：50% 稀釋底層木質與 10% 檸檬醛微調。"}
 
-==============================================================================
-
 2. 側邊欄設定 (Sidebar Controls)
-
-==============================================================================
 
 with st.sidebar:
 st.title("🌿 Global Fragrance OS")
@@ -82,7 +71,7 @@ c_btn1, c_btn2 = st.columns(2)
 with c_btn1:
     if st.button("➕ 複製新 Mod", use_container_width=True):
         new_name = f"Mod {len(mod_list) + 1}"
-        st.session_state.mods[new_name] = eval(repr(st.session_state.mods[st.session_state.active_mod]))
+        st.session_state.mods[new_name] = copy.deepcopy(st.session_state.mods[st.session_state.active_mod])
         st.session_state.mod_notes[new_name] = f"複製自 {st.session_state.active_mod}"
         st.session_state.active_mod = new_name
         st.rerun()
@@ -124,11 +113,7 @@ st.markdown(f"""
 
 """, unsafe_allow_html=True)
 
-==============================================================================
-
 3. 國際香精巨頭 4 大研發 SOP 導航 Tabs
-
-==============================================================================
 
 tab_step1, tab_step2, tab_step3, tab_step4, tab_lib = st.tabs([
 "🕯️ Step 1: 電腦數位預審 (Advisory)",
@@ -138,11 +123,7 @@ tab_step1, tab_step2, tab_step3, tab_step4, tab_lib = st.tabs([
 "📚 原料庫與 CAS 管理 (Library)"
 ])
 
-==============================================================================
-
-TAB 1: Step 1 電腦數位預審 (智慧引導與情境骨幹)
-
-==============================================================================
+TAB 1: Step 1 電腦數位預審
 
 with tab_step1:
 st.header("🕯️ Step 1: 電腦數位預審 (Digital Formulation & Regulatory Simulation)")
@@ -205,11 +186,7 @@ with col_hero_r:
     st.dataframe(pd.DataFrame(preview_rows), hide_index=True, use_container_width=True)
 
 
-==============================================================================
-
-TAB 2: Step 2 小量調香母表 (天平累計秤重與滴數轉換)
-
-==============================================================================
+TAB 2: Step 2 小量調香母表
 
 with tab_step2:
 st.markdown(f"### 📋 Step 2: 小量調香試樣 (Lab Sampling & Olfactive Profiling)")
@@ -321,11 +298,7 @@ else:
         st.rerun()
 
 
-==============================================================================
-
-TAB 3: Step 3 熟成與冷濾沉澱預測 (風味輪與物性模擬)
-
-==============================================================================
+TAB 3: Step 3 熟成與冷濾沉澱預測
 
 with tab_step3:
 st.header("🧪 Step 3: 等比例調配與冷濾沉澱 (Finished Compounding & Maceration)")
@@ -334,7 +307,6 @@ st.caption("預測 14~21 天熟成陳化過程中的植物蠟析出、低溫冷�
 if not mod_calc:
     st.warning("⚠️ 請先於母表中輸入原料。")
 else:
-    # 第一排：雙層風味輪 + 五維能量雷達
     cw1, cw2 = st.columns([1.6, 1])
     with cw1:
         st.subheader("🎨 雙層香氣風味輪 (Olfactive Sunburst)")
@@ -361,7 +333,6 @@ else:
 
     st.divider()
 
-    # 第二排：熟成物理特性預測卡片
     st.subheader("🔬 熟成相容性與冷濾損耗預測 (Physical Stability & Cold Filtration)")
     m_eval = mod_calc["maceration_eval"]
 
@@ -392,11 +363,7 @@ else:
             st.session_state.mod_notes[st.session_state.active_mod] = n_note
 
 
-==============================================================================
-
-TAB 4: Step 4 商業量產與 BMR 工廠工單 (ISO 22716 匯出)
-
-==============================================================================
+TAB 4: Step 4 商業量產與 BMR 工廠工單
 
 with tab_step4:
 st.header("🏭 Step 4: 輸出標準 BMR 工單 (Factory Scale-up & Production)")
@@ -442,11 +409,7 @@ if final_calc:
         st.caption("符合歐盟 EC 1223/2009 與美國 FDA MoCRA 10 ppm 揭露標準。")
 
 
-==============================================================================
-
-TAB 5: 原料資料庫動態管理 (免改程式碼新增與 CAS 檢索)
-
-==============================================================================
+TAB 5: 原料資料庫動態管理
 
 with tab_lib:
 st.header("📚 原料資料庫動態管理 (Master Library CRUD)")
