@@ -133,67 +133,30 @@ else:
             row["cost"] = round(row["active_g"] * row["cost_per_g"], 2)
         return items
 
-if hasattr(core, "predict_maceration_and_filtration"):
-    predict_maceration_and_filtration = core.predict_maceration_and_filtration
-else:
-    def predict_maceration_and_filtration(formula_inputs, dosage_ratio, batch_target, meta_lib):
-        total_gross_g = sum([item.get("gross_g", 0.0) for item in formula_inputs.values()])
-        if total_gross_g <= 0: return None
-        total_active_g = 0.0
-        total_carrier_g = 0.0
-        heavy_resin_g = 0.0
-        natural_g = 0.0
-        for ing_id, data in formula_inputs.items():
-            gross = data.get("gross_g", 0.0)
-            if gross <= 0 or ing_id not in meta_lib: continue
-            m = meta_lib[ing_id]
-            dil_ratio = data.get("dilution_pct", 100.0) / 100.0
-            active_g = gross * dil_ratio
-            total_active_g += active_g
-            total_carrier_g += gross * (1.0 - dil_ratio)
-            if m.get("type") == "Natural Essential Oil":
-                natural_g += active_g
-                if "濃稠" in m.get("name_cn", "") or "原精" in m.get("name_cn", "") or "香脂" in m.get("name_cn", ""):
-                    heavy_resin_g += active_g
-        if total_active_g <= 0: return None
+def compute_sample_application(jus_formula, target_dosage, bottles, vol_ml, meta_lib):
+    """計算單一成品樣品取樣所需之原油重與酒精補足量 (含 3% 冷濾損耗裕度)"""
+    total_jus_g = sum(d.get("gross_g", 0.0) for d in jus_formula.values())
+    if total_jus_g <= 0:
+        return None
+    total_active_g = sum(d.get("gross_g", 0.0) * (d.get("dilution_pct", 100.0) / 100.0) for d in jus_formula.values())
+    active_in_jus_ratio = total_active_g / total_jus_g
 
-        finished_density = (dosage_ratio * 0.95) + ((1.0 - dosage_ratio) * 0.835)
-        base_batch_g = batch_target["bottles"] * batch_target["vol_ml"] * finished_density
-        overfill_factor = 1.03
-        total_batch_g = base_batch_g * overfill_factor
-        target_active_g = total_batch_g * dosage_ratio
-        scale_factor = target_active_g / total_active_g
-        target_carrier_g = total_carrier_g * scale_factor
-        net_alcohol_g = total_batch_g - target_active_g - target_carrier_g
+    finished_density = (target_dosage * 0.95) + ((1.0 - target_dosage) * 0.835)
+    base_batch_g = bottles * vol_ml * finished_density
+    overfill_total_g = base_batch_g * 1.03  # 3% Overfill Buffer
 
-        natural_ratio = natural_g / total_active_g if total_active_g > 0 else 0
-        resin_ratio = heavy_resin_g / total_active_g if total_active_g > 0 else 0
+    req_active_g = overfill_total_g * target_dosage
+    req_jus_g = req_active_g / active_in_jus_ratio if active_in_jus_ratio > 0 else req_active_g
+    net_alcohol_g = max(0.0, overfill_total_g - req_jus_g)
 
-        maceration_days = 7
-        maceration_desc = "配方以純合成單體為主，短效分子融合即可。"
-        if resin_ratio > 0.15:
-            maceration_days = 28
-            maceration_desc = "含有高比例樹脂與原精，需長效熟成 4 週建立半縮醛鍵聯，氣味方能圓潤不刺鼻。"
-        elif natural_ratio > 0.30:
-            maceration_days = 21
-            maceration_desc = "天然精油成分豐富，建議熟成 3 週降低前調刺激感與水解風險。"
-        elif natural_ratio > 0.10:
-            maceration_days = 14
-            maceration_desc = "標準商用香水熟成期，需 2 週讓精油與單體完美交融。"
-
-        filtration_alerts = []
-        if resin_ratio > 0.05:
-            filtration_alerts.append({"level": "danger", "msg": f"⚠️ 偵測到 {resin_ratio*100:.1f}% 高蠟質/樹脂成分。加入酒精後極易引發絮凝白濁！強烈建議將該原料改以 TEC (檸檬酸三乙酯) 預溶，避免阻塞冷濾紙與噴頭。"})
-        elif net_alcohol_g < 0:
-            filtration_alerts.append({"level": "danger", "msg": "🚨 嚴重物理警示：配方自帶的稀釋溶劑總重已大於成品總重，無法加入酒精！請回母表提高原料純度 (例如改為 100% 純原液)。"})
-        else:
-            filtration_alerts.append({"level": "success", "msg": "✅ 物理相容性過關。成品中未見過高蠟質結晶或絮凝風險。"})
-
-        return {
-            "batch_metrics": {"bottles": batch_target["bottles"], "vol_ml": batch_target["vol_ml"], "base_total_g": base_batch_g, "overfill_total_g": total_batch_g, "target_active_g": target_active_g, "target_carrier_g": target_carrier_g, "net_alcohol_g": net_alcohol_g},
-            "maceration": {"days": maceration_days, "desc": maceration_desc},
-            "alerts": filtration_alerts
-        }
+    return {
+        "bottles": bottles,
+        "vol_ml": vol_ml,
+        "dosage_pct": target_dosage * 100.0,
+        "overfill_total_g": overfill_total_g,
+        "req_jus_g": req_jus_g,
+        "net_alcohol_g": net_alcohol_g
+    }
 
 st.set_page_config(page_title="Global Fragrance OS | 專業調香工作站", layout="wide", page_icon="✨")
 
@@ -203,12 +166,15 @@ st.markdown("""
         .block-container { padding: 0.8rem 0.4rem !important; }
         input[type="number"] { font-size: 15px !important; }
     }
+    .brief-box { background: #0F172A; border: 1px solid #1E293B; border-radius: 8px; padding: 12px; margin-bottom: 12px; color: white; }
+    .brief-chip { background: #1E293B; color: #38BDF8; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 12px; }
     .mod-pill { background: #0F172A; color: #38BDF8; padding: 4px 10px; border-radius: 6px; font-weight: bold; border: 1px solid #0284C7; font-size: 13px; }
     .hero-card { background: #F8FAFC; border: 1px solid #CBD5E1; padding: 12px; border-radius: 8px; margin-bottom: 10px; }
     .cockpit-card { background: #FFFFFF; border: 1px solid #E2E8F0; padding: 14px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
     .scale-chip { background: #064E3B; color: #6EE7B7; padding: 3px 6px; border-radius: 4px; font-family: monospace; font-size: 12px; font-weight: bold; display: inline-block; }
     .cas-badge { background: #F1F5F9; color: #475569; padding: 2px 5px; border-radius: 4px; font-family: monospace; font-size: 11px; border: 1px solid #CBD5E1; }
     .stats-bar { background: #0F172A; color: white; padding: 12px 18px; border-radius: 8px; margin-top: 15px; display: flex; justify-content: space-between; align-items: center; }
+    .sample-card { background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 8px; padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
 </style>
 """, unsafe_allow_html=True)
 
@@ -229,25 +195,42 @@ if "dosed_checklist" not in st.session_state:
     st.session_state.dosed_checklist = {}
 
 # ==============================================================================
-# SIDEBAR: 專案設計書 (Brief) 永遠常駐頂部
+# SIDEBAR: 專案設計書 (Project Brief) - 全局法規與設計基準
 # ==============================================================================
 with st.sidebar:
     st.title("🌿 Fragrance OS")
-    st.caption("Studio Cockpit 專業調香工作台")
+    st.caption("Enterprise Perfumery Operating System")
     st.divider()
 
-    st.subheader("🌐 專案法規哨兵 (常駐硬邊界)")
-    selected_region = st.selectbox("監管標準", list(REGULATORY_REGIONS.keys()), index=0)
+    st.markdown("### 📋 專案設計書 (Project Brief)")
+    st.markdown("""<div class="brief-box">
+        <span class="brief-chip">GLOBAL BOUNDARY</span>
+        <div style="font-size:12px; color:#94A3B8; margin-top:4px;">全專案法規基準與 IFRA 51st 安全紅線推導核心</div>
+    </div>""", unsafe_allow_html=True)
+
+    selected_region = st.selectbox(
+        "🌐 專案法規基準 (Regulatory Baseline)",
+        list(REGULATORY_REGIONS.keys()),
+        index=0
+    )
     region_info = REGULATORY_REGIONS[selected_region]
-    st.caption(f"🛡️ {region_info['desc']}")
+    st.caption(f"🛡️ **法規邊界**：{region_info['desc']}")
 
-    st.subheader("🎯 IFRA 計算基準賦香率")
-    selected_tier = st.selectbox("品類濃度等級", list(PERFUME_CONCENTRATION_PRESETS.keys()), index=2)
+    selected_tier = st.selectbox(
+        "🎯 設計目標賦香率 (Target Dosage for IFRA)",
+        list(PERFUME_CONCENTRATION_PRESETS.keys()),
+        index=2
+    )
     dosage_ratio = PERFUME_CONCENTRATION_PRESETS[selected_tier]
-    st.caption("💡 僅供電腦換算 IFRA 51st 安全紅線，Step 2 秤重請 100% 秤取純香精原油 (Jus)。")
+
+    st.info(
+        "💡 **調香師防呆須知**：\n"
+        "此百分比僅供系統換算 **IFRA 51st 安全紅線** 與 **GC-MS 致敏原上限**。\n"
+        "在 **Step 2 天平放樣** 時，請 100% 秤取純香精原油母液 (Jus)，嚴禁加入酒精！"
+    )
 
     st.divider()
-    st.subheader("📂 研發版本管理 (Mods)")
+    st.subheader("📂 研發版本庫 (Formula Mods)")
     mod_list = list(st.session_state.mods.keys())
     st.session_state.active_mod = st.radio("當前操作版本：", mod_list, index=mod_list.index(st.session_state.active_mod))
 
@@ -270,20 +253,19 @@ rt_calc = analyze_formula_realtime(current_formula, dosage_ratio, MASTER_LIBRARY
 mod_calc = calculate_mod_profile(current_formula, dosage_ratio, {"bottles": 1, "vol_ml": 5}, MASTER_LIBRARY) if calculate_mod_profile else None
 sheet_rows = build_compounding_sheet(current_formula, dosage_ratio, MASTER_LIBRARY)
 
-# 四大工作站導航
 t_adv, t_cockpit, t_finish, t_scaleup = st.tabs([
     "🎨 1. 數位預審 (Step 1)",
-    "🎛️ 2. 調香放樣機艙 (Step 2)",
+    "🎛️ 2. 原油調香機艙 (Step 2)",
     "🧪 3. 成品調配熟成 (Step 3)",
     "🏭 4. 商業量產 (Step 4)"
 ])
 
 # ==============================================================================
-# TAB 1: 數位預審 (Step 1)
+# TAB 1: 數位預審 (Step 1: 依據 Brief 預審化學骨架)
 # ==============================================================================
 with t_adv:
     st.header("🎨 感性調香畫布 ➔ 數位法規秒級預審")
-    st.caption("選定主角原料並探索風味意境，拉動感性拉桿由演算法秒級拆解化學骨架，並由 GC-MS 引擎穿透計算多國法規紅綠燈。")
+    st.caption(f"專案基準：**{region_info['code']}** ｜ 設計賦香率：**{dosage_ratio*100:.0f}%**。演算法秒級拆解化學骨架，並由 GC-MS 引擎穿透計算多國法規紅綠燈。")
 
     c_canvas_l, c_canvas_r = st.columns([1.15, 1.35])
     with c_canvas_l:
@@ -341,7 +323,7 @@ with t_adv:
             st.rerun()
 
     with c_canvas_r:
-        st.subheader("💡 系統化學秒級拆解預覽 (5.00g 起手)")
+        st.subheader("💡 系統化學秒級拆解預覽 (5.000g 起手)")
         fig_preview_rad = go.Figure(go.Scatterpolar(
             r=list(slider_dict.values()) + [list(slider_dict.values())[0]],
             theta=list(slider_dict.keys()) + [list(slider_dict.keys())[0]],
@@ -373,29 +355,24 @@ with t_adv:
             st.success("✅ 此香氣骨架未檢測出任何法定過敏原！")
 
 # ==============================================================================
-# TAB 2: 調香放樣機艙 (Step 2: 3-Pane Cockpit)
+# TAB 2: 原油調香機艙 (Step 2: 100% Jus Compounding Cockpit)
 # ==============================================================================
 with t_cockpit:
-    # 頂部狀態橫條
     st.markdown(f"""
     <div style="background:#0F172A; padding:8px 16px; border-radius:6px; color:white; display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-        <div><b>🎛️ 調香放樣機艙 (Phase A Jus)</b> ｜ 當前版本：<span class="mod-pill">{st.session_state.active_mod}</span></div>
+        <div><b>🎛️ 調香放樣機艙 (Phase A Jus 純香精原油)</b> ｜ 版本：<span class="mod-pill">{st.session_state.active_mod}</span></div>
         <div style="font-size:13px; color:#94A3B8;">天平純香精原油總量：<b style="color:#FBBF24; font-size:15px;">{total_jus_g:.3f} g</b> ｜ 監控基準：<span style="color:#38BDF8;">{region_info['code']} @ {dosage_ratio*100:.0f}%</span></div>
     </div>
     """, unsafe_allow_html=True)
 
-    # 3-Pane 核心工作台佈局
     p_left, p_mid, p_right = st.columns([1.1, 2.3, 1.2])
 
-    # --------------------------------------------------------------------------
     # 🟢 LEFT PANE: 原料庫搜尋與資料卡
-    # --------------------------------------------------------------------------
     with p_left:
         st.markdown("#### 🟢 原料庫清單 (Library)")
         lib_search = st.text_input("🔍 搜尋名稱或 CAS：", placeholder="例如: Iso E Super", label_visibility="collapsed")
         note_filter = st.selectbox("過濾香階：", ["全部香階", "Top (前調)", "Mid (中調)", "Base (後調)"], label_visibility="collapsed")
 
-        # 原料過濾
         filtered_keys = []
         for k, v in MASTER_LIBRARY.items():
             match_txt = lib_search.lower() in v["name_cn"].lower() or lib_search.lower() in k.lower() or lib_search in v.get("cas", "")
@@ -434,13 +411,10 @@ with t_cockpit:
                 else:
                     st.warning("⚠️ 此原料已存在於當前配方表中。")
 
-    # --------------------------------------------------------------------------
-    # 🔵 CENTER PANE: 配方矩陣與天平母表 (The Formulation Matrix)
-    # --------------------------------------------------------------------------
+    # 🔵 CENTER PANE: 配方矩陣與天平母表
     with p_mid:
         st.markdown("#### 🔵 配方矩陣母表 (Formulation Matrix)")
         
-        # 頂部控制列：視角切換 & 等比縮放工具 (Batch Auto-Scaling)
         c_ctl1, c_ctl2 = st.columns([1.5, 1.2])
         with c_ctl1:
             matrix_view = st.radio("顯示視角：", ["⚖️ 克數 (0.001g)", "📊 百分比 (%)", "💧 滴數 (Drops)"], horizontal=True, label_visibility="collapsed")
@@ -460,7 +434,6 @@ with t_cockpit:
         if not sheet_rows:
             st.info("👈 當前配方為空。請由左欄原料庫挑選原料加入，或前往 Tab 1 注入起手骨架。")
         else:
-            # 矩陣表頭
             h_cols = st.columns([0.5, 0.6, 2.2, 1.3, 1.4, 1.5, 1.3, 0.5])
             h_cols[0].markdown("**已加**")
             h_cols[1].markdown("**順序**")
@@ -480,23 +453,17 @@ with t_cockpit:
                 m = MASTER_LIBRARY[ing_id]
                 r_cols = st.columns([0.5, 0.6, 2.2, 1.3, 1.4, 1.5, 1.3, 0.5])
 
-                # 實體投料打勾
                 is_dosed = r_cols[0].checkbox("投", value=current_mod_checks.get(ing_id, False), key=f"chk_m_{st.session_state.active_mod}_{ing_id}", label_visibility="collapsed")
                 current_mod_checks[ing_id] = is_dosed
 
-                # 順序與香階
                 r_cols[1].markdown(f"**#{row['seq']}**\n`{row['note']}`")
-
-                # 原料名稱
                 name_style = "text-decoration: line-through; color: #94A3B8;" if is_dosed else "font-weight: 600;"
                 r_cols[2].markdown(f"<span style='{name_style}'>{row['name_cn']}</span><br><span class='cas-badge'>CAS: {row['cas']}</span>", unsafe_allow_html=True)
 
-                # 濃度與溶劑下拉
                 new_dil = r_cols[3].selectbox("濃度", DILUTION_TIERS, index=DILUTION_TIERS.index(float(row["dilution_pct"])) if float(row["dilution_pct"]) in DILUTION_TIERS else 0, key=f"m_dil_{st.session_state.active_mod}_{ing_id}", label_visibility="collapsed")
                 new_sol = r_cols[4].selectbox("溶劑", SOLVENT_CHOICES, index=SOLVENT_CHOICES.index(row["solvent"]) if row["solvent"] in SOLVENT_CHOICES else 0, key=f"m_sol_{st.session_state.active_mod}_{ing_id}", label_visibility="collapsed")
                 eff_sg_now = calc_effective_sg(m.get("sg", 1.0), new_sol, new_dil)
 
-                # 投料數值視角切換 (0.001g 精度)
                 if "百分比" in matrix_view:
                     r_cols[5].markdown(f"**{row['pct']:.1f} %**<br><span style='font-size:11px; color:#64748B;'>{row['ppt']:.0f} ppt</span>", unsafe_allow_html=True)
                     new_g = float(row["gross_g"])
@@ -508,7 +475,6 @@ with t_cockpit:
                     new_g = r_cols[5].number_input("克數", min_value=0.001, max_value=500.0, value=float(row["gross_g"]), step=0.010, format="%.3f", key=f"m_g_{st.session_state.active_mod}_{ing_id}", label_visibility="collapsed")
                     r_cols[5].caption(f"💧 {grams_to_drops(new_g, eff_sg_now)} 滴")
 
-                # 天平累計 (Running Tare)
                 r_cols[6].markdown(f"<span class='scale-chip'>⚖️ {row['cumulative_g']:.3f} g</span>", unsafe_allow_html=True)
 
                 with r_cols[7]:
@@ -531,13 +497,10 @@ with t_cockpit:
                 st.session_state.mods[st.session_state.active_mod] = updated_formula
                 st.rerun()
 
-    # --------------------------------------------------------------------------
-    # 🟡 RIGHT PANE: 即時法規與嗅覺金字塔 (Live Compliance & Analytics)
-    # --------------------------------------------------------------------------
+    # 🟡 RIGHT PANE: 即時分析
     with p_right:
         st.markdown("#### 🟡 即時分析 (Analytics)")
 
-        # 1. 嗅覺金字塔進度條 (Olfactory Pyramid)
         st.markdown("**嗅覺金字塔結構：**")
         top_p = mod_calc["notes_pct"]["Top"] if mod_calc else 0.0
         mid_p = mod_calc["notes_pct"]["Mid"] if mod_calc else 0.0
@@ -551,8 +514,6 @@ with t_cockpit:
         st.progress(min(1.0, base_p / 100.0))
 
         st.divider()
-
-        # 2. IFRA 51st 安全檢驗燈號
         st.markdown(f"**🛡️ IFRA 51st 法規審查 ({region_info['code']})：**")
         all_safe = True
         for ing_id, stat in rt_calc["ifra_status"].items():
@@ -565,20 +526,16 @@ with t_cockpit:
         if all_safe:
             st.success("✅ 全配方原料皆在 IFRA Category 4 安全限值內！")
 
-        # 3. 評香筆記快寫
         st.divider()
         st.markdown("**📝 試香紙評測筆記：**")
         c_n = st.session_state.mod_notes.get(st.session_state.active_mod, "")
         n_n = st.text_area("記錄初調擴散度與試香紙轉折：", value=c_n, height=100, label_visibility="collapsed")
         if n_n != c_n: st.session_state.mod_notes[st.session_state.active_mod] = n_n
 
-    # --------------------------------------------------------------------------
-    # 🏁 BOTTOM STATS BAR: 即時成本與酒精需求計算
-    # --------------------------------------------------------------------------
+    # 🏁 BOTTOM STATS BAR
     if mod_calc:
         total_act = rt_calc["total_active_g"]
         est_cost_per_10g = (mod_calc["cost_per_g_active"] * total_act / total_jus_g * 10.0) if total_jus_g > 0 else 0.0
-        # 若做成設定之賦香率需補之酒精量
         target_perfume_total_g = (total_act / dosage_ratio) if dosage_ratio > 0 else 0.0
         alcohol_needed_g = max(0.0, target_perfume_total_g - total_jus_g)
 
@@ -587,23 +544,23 @@ with t_cockpit:
             <div>
                 <span style="color:#94A3B8; font-size:12px;">原料純油成本：</span>
                 <b style="color:#FBBF24; font-size:16px;">NT$ {est_cost_per_10g:.2f} / 10g 原油</b>
-                <span style="color:#64748B; font-size:12px; margin-left:12px;">(純單體/原油克成本: NT$ {mod_calc['cost_per_g_active']:.2f}/g)</span>
+                <span style="color:#64748B; font-size:12px; margin-left:12px;">(純香精克成本: NT$ {mod_calc['cost_per_g_active']:.2f}/g)</span>
             </div>
             <div>
-                <span style="color:#94A3B8; font-size:12px;">Step 3 做成 {dosage_ratio*100:.0f}% 成品需注入 Phase B 酒精：</span>
+                <span style="color:#94A3B8; font-size:12px;">依設計基準 {dosage_ratio*100:.0f}% 稀釋需 Phase B 酒精：</span>
                 <b style="color:#38BDF8; font-size:16px;">+ {alcohol_needed_g:.2f} g Alcohol</b>
             </div>
         </div>
         """, unsafe_allow_html=True)
 
 # ==============================================================================
-# TAB 3: 成品調配熟成 (Step 3: 雙子分頁)
+# TAB 3: 成品調配熟成 (Step 3: 多濃度取樣計算機 & 熟成冷濾)
 # ==============================================================================
 with t_finish:
     st.header("🧪 等比例成品調配與熟成冷濾 (Step 3)")
-    st.caption("從調好的 Phase A 原油中取樣注入酒精，系統自動計算冷濾沉澱與 3% Overfill 損耗裕度。")
+    st.caption("調香師從已配製好的 Phase A 原油中取樣注入酒精載體，系統自動計算冷濾損耗裕度與雙階段熟成時鐘。")
 
-    t_f_a, t_f_b = st.tabs(["🏛️ 3-A 氣味建築與 24h 動力學", "❄️ 3-B 成品取樣調配與熟成冷濾"])
+    t_f_a, t_f_b = st.tabs(["🏛️ 3-A 原油氣味建築與 24h 動力學", "❄️ 3-B 多濃度成品取樣計算機 (Multi-Sampler)"])
 
     with t_f_a:
         if mod_calc:
@@ -629,50 +586,109 @@ with t_finish:
             st.plotly_chart(fig_traj, use_container_width=True)
 
     with t_f_b:
-        st.subheader("🧪 實驗室等比例成品小樣調配 (Proportional Compounding)")
-        c_samp1, c_samp2 = st.columns(2)
-        samp_bottles = c_samp1.number_input("試香配製數量 (瓶)", 1, 100, 1, 1)
-        samp_vol = c_samp2.selectbox("單瓶試香容量 (ml)", [5, 10, 15, 30, 50], index=1)
+        st.subheader("🧪 多濃度成品取樣計算機 (Multi-Concentration Application Sampler)")
+        st.caption("大廠實務：從調配好的原油 (Jus) 中分別取出定量樣品，製作不同濃度的試香噴霧小樣進行擴散與持香盲測。")
 
-        mac_calc = predict_maceration_and_filtration(current_formula, dosage_ratio, {"bottles": samp_bottles, "vol_ml": samp_vol}, MASTER_LIBRARY) if predict_maceration_and_filtration else None
-
-        if mac_calc:
-            bm = mac_calc["batch_metrics"]
-            st.markdown(f"""
-            <div style="background:#F8FAFC; padding:18px; border-radius:8px; border:1px solid #E2E8F0; margin-bottom:18px;">
-                <h5 style="color:#0F172A; margin:0 0 6px 0;">⚖️ Phase A + Phase B 總預投料重 (含 3% 冷濾損耗裕度) : <span style="color:#0EA5E9;">{bm['overfill_total_g']:.2f} g</span></h5>
-                <p style="color:#64748B; font-size:12px; margin:0 0 10px 0;">為避免 -4°C 低溫冷濾時因濾紙吸附與過濾耗損造成裝瓶不足，系統已自動為 {samp_bottles} 瓶 {samp_vol}ml 樣品加上 3% Overfill 防爆裕度。</p>
-                <div style="display:flex; justify-content:space-around; align-items:center; background:white; padding:12px; border-radius:6px; border:1px solid #CBD5E1;">
-                    <div style="text-align:center;">
-                        <div style="font-size:12px; color:#475569;">Phase A (已熟成純香精油) 需取：</div>
-                        <div style="font-size:22px; color:#10B981; font-weight:bold;">{bm['target_active_g'] + bm['target_carrier_g']:.2f} g</div>
-                    </div>
-                    <div style="font-size:24px; color:#CBD5E1;">+</div>
-                    <div style="text-align:center;">
-                        <div style="font-size:12px; color:#475569;">Phase B (95% 酒精載體) 需補：</div>
-                        <div style="font-size:22px; color:#3B82F6; font-weight:bold;">{bm['net_alcohol_g']:.2f} g</div>
-                    </div>
-                </div>
+        # 頂部原油母液存量橫條
+        st.markdown(f"""
+        <div style="background:#0F172A; padding:12px 16px; border-radius:8px; color:white; display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+            <div>
+                <span style="color:#94A3B8; font-size:13px;">母液來源版本：</span>
+                <span class="mod-pill">{st.session_state.active_mod}</span>
             </div>
-            """, unsafe_allow_html=True)
+            <div>
+                <span style="color:#94A3B8; font-size:13px;">可用原油母液存量 (Available Jus)：</span>
+                <b style="color:#FBBF24; font-size:18px;">{total_jus_g:.3f} g</b>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-            c_mac1, c_mac2 = st.columns(2)
-            with c_mac1:
-                st.subheader("⏳ 熟成時鐘預測 (Maceration Clock)")
-                st.markdown(f"""
-                <div style="text-align:center; padding:18px; border: 2px dashed #CBD5E1; border-radius:8px; background:white;">
-                    <h1 style="color:#F59E0B; margin:0; font-size:42px;">{mac_calc['maceration']['days']} 天</h1>
-                    <p style="color:#475569; font-size:13px; margin-top:8px;">{mac_calc['maceration']['desc']}</p>
-                </div>
-                """, unsafe_allow_html=True)
-            with c_mac2:
-                st.subheader("❄️ 蠟質沉澱與冷濾相容性預警")
-                for alert in mac_calc["alerts"]:
-                    if alert["level"] == "danger": st.error(alert["msg"])
-                    else: st.success(alert["msg"])
+        if total_jus_g <= 0:
+            st.warning("⚠️ 當前原油存量為 0g。請先於 Tab 2 調香機艙建立配方並秤取原油。")
+        else:
+            col_s1, col_s2 = st.columns(2)
+
+            with col_s1:
+                st.markdown("#### 樣品 A：日常清新版 (預設 EdT / 輕濃度)")
+                s1_tier = st.selectbox("樣品 A 濃度規格", list(PERFUME_CONCENTRATION_PRESETS.keys()), index=1, key="s1_tier")
+                s1_dosage = PERFUME_CONCENTRATION_PRESETS[s1_tier]
+                s1_c1, s1_c2 = st.columns(2)
+                s1_bot = s1_c1.number_input("配製瓶數 (A)", 1, 20, 1, 1, key="s1_bot")
+                s1_vol = s1_c2.selectbox("單瓶容量規格 (A)", [5, 10, 15, 30, 50], index=1, key="s1_vol")
+
+                res_s1 = compute_sample_application(current_formula, s1_dosage, s1_bot, s1_vol, MASTER_LIBRARY)
+                if res_s1:
+                    st.markdown(f"""
+                    <div class="sample-card" style="border-left:4px solid #10B981;">
+                        <div style="font-weight:bold; color:#0F172A;">{s1_tier} ({s1_bot} 瓶 × {s1_vol}ml)</div>
+                        <div style="font-size:12px; color:#64748B; margin-top:2px;">含 3% 冷濾損耗總投料: <b>{res_s1['overfill_total_g']:.2f} g</b></div>
+                        <hr style="margin:8px 0; border:none; border-top:1px solid #E2E8F0;">
+                        <div style="display:flex; justify-content:space-between;">
+                            <div>
+                                <span style="font-size:12px; color:#475569;">Phase A 取用原油：</span><br>
+                                <b style="color:#10B981; font-size:18px;">{res_s1['req_jus_g']:.3f} g</b>
+                            </div>
+                            <div>
+                                <span style="font-size:12px; color:#475569;">Phase B 補入酒精：</span><br>
+                                <b style="color:#3B82F6; font-size:18px;">{res_s1['net_alcohol_g']:.2f} g</b>
+                            </div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+            with col_s2:
+                st.markdown("#### 樣品 B：沙龍主力留香版 (預設 EdP / 高濃度)")
+                s2_tier = st.selectbox("樣品 B 濃度規格", list(PERFUME_CONCENTRATION_PRESETS.keys()), index=2, key="s2_tier")
+                s2_dosage = PERFUME_CONCENTRATION_PRESETS[s2_tier]
+                s2_c1, s2_c2 = st.columns(2)
+                s2_bot = s2_c1.number_input("配製瓶數 (B)", 1, 20, 1, 1, key="s2_bot")
+                s2_vol = s2_c2.selectbox("單瓶容量規格 (B)", [5, 10, 15, 30, 50], index=1, key="s2_vol")
+
+                res_s2 = compute_sample_application(current_formula, s2_dosage, s2_bot, s2_vol, MASTER_LIBRARY)
+                if res_s2:
+                    st.markdown(f"""
+                    <div class="sample-card" style="border-left:4px solid #3B82F6;">
+                        <div style="font-weight:bold; color:#0F172A;">{s2_tier} ({s2_bot} 瓶 × {s2_vol}ml)</div>
+                        <div style="font-size:12px; color:#64748B; margin-top:2px;">含 3% 冷濾損耗總投料: <b>{res_s2['overfill_total_g']:.2f} g</b></div>
+                        <hr style="margin:8px 0; border:none; border-top:1px solid #E2E8F0;">
+                        <div style="display:flex; justify-content:space-between;">
+                            <div>
+                                <span style="font-size:12px; color:#475569;">Phase A 取用原油：</span><br>
+                                <b style="color:#10B981; font-size:18px;">{res_s2['req_jus_g']:.3f} g</b>
+                            </div>
+                            <div>
+                                <span style="font-size:12px; color:#475569;">Phase B 補入酒精：</span><br>
+                                <b style="color:#3B82F6; font-size:18px;">{res_s2['net_alcohol_g']:.2f} g</b>
+                            </div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+            # 原油庫存動態扣除與警戒
+            total_req_jus = (res_s1["req_jus_g"] if res_s1 else 0.0) + (res_s2["req_jus_g"] if res_s2 else 0.0)
+            remaining_jus = total_jus_g - total_req_jus
+
+            st.divider()
+            c_sum1, c_sum2 = st.columns([1.5, 1])
+            with c_sum1:
+                st.markdown("##### 📊 原油母液消耗平衡結算：")
+                if remaining_jus >= 0:
+                    st.success(f"✅ 兩款樣品共需原油 **{total_req_jus:.3f} g**，母瓶尚餘 **{remaining_jus:.3f} g**（可保留於深色玻璃瓶中作為純油陳化評估）。")
+                else:
+                    st.error(f"❌ 原油庫存不足！兩款樣品共需 **{total_req_jus:.3f} g**，但當前母瓶僅有 **{total_jus_g:.3f} g**（缺口 {-remaining_jus:.3f} g）。請回 Tab 2 利用「一鍵等比放大」擴增原油批次。")
+
+            with c_sum2:
+                mac_meta = predict_maceration_and_filtration(current_formula, dosage_ratio, {"bottles": 1, "vol_ml": 10}, MASTER_LIBRARY) if predict_maceration_and_filtration else None
+                if mac_meta:
+                    st.markdown(f"""
+                    <div style="background:#F1F5F9; padding:10px 14px; border-radius:6px; font-size:13px;">
+                        <b>⏳ 熟成時鐘指針：{mac_meta['maceration']['days']} 天</b><br>
+                        <span style="color:#64748B; font-size:12px;">{mac_meta['maceration']['desc']}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
 
 # ==============================================================================
-# TAB 4: 商業放大量產 (Step 4)
+# TAB 4: 商業量產 (Step 4: ISO 22716 工單)
 # ==============================================================================
 with t_scaleup:
     st.header("🏭 商業放大量產閘門 (Commercial Scale-up)")
