@@ -35,11 +35,11 @@ st.markdown("""
 
 """, unsafe_allow_html=True)
 
-------------------------------------------------------------------------------
+==============================================================================
 
 1. 狀態初始化與版本控制 (Modding System)
 
-------------------------------------------------------------------------------
+==============================================================================
 
 if "lib_data" not in st.session_state:
 st.session_state.lib_data = load_master_library()
@@ -58,11 +58,11 @@ st.session_state.active_mod = "Mod 1"
 if "mod_notes" not in st.session_state:
 st.session_state.mod_notes = {"Mod 1": "初始版：50% 稀釋底層木質與 10% 檸檬醛微調。"}
 
-------------------------------------------------------------------------------
+==============================================================================
 
-2. 側邊欄：版本切換與目標規格
+2. 側邊欄設定 (Sidebar Controls)
 
-------------------------------------------------------------------------------
+==============================================================================
 
 with st.sidebar:
 st.title("🌿 Global Fragrance OS")
@@ -103,7 +103,7 @@ rt_calc = analyze_formula_realtime(current_formula, dosage_ratio, active_lib)
 mod_calc = calculate_mod_profile(current_formula, dosage_ratio, {"bottles": 100, "vol_ml": 50}, active_lib)
 sheet_rows = build_compounding_sheet(current_formula, active_lib)
 
-頂部 Sticky HUD
+頂部 Sticky HUD 即時監控列
 
 if mod_calc:
 st.markdown(f"""
@@ -124,11 +124,11 @@ st.markdown(f"""
 
 """, unsafe_allow_html=True)
 
-------------------------------------------------------------------------------
+==============================================================================
 
 3. 國際香精巨頭 4 大研發 SOP 導航 Tabs
 
-------------------------------------------------------------------------------
+==============================================================================
 
 tab_step1, tab_step2, tab_step3, tab_step4, tab_lib = st.tabs([
 "🕯️ Step 1: 電腦數位預審 (Advisory)",
@@ -334,7 +334,7 @@ st.caption("預測 14~21 天熟成陳化過程中的植物蠟析出、低溫冷�
 if not mod_calc:
     st.warning("⚠️ 請先於母表中輸入原料。")
 else:
-    # 第一排：風味輪 + 五維能量雷達
+    # 第一排：雙層風味輪 + 五維能量雷達
     cw1, cw2 = st.columns([1.6, 1])
     with cw1:
         st.subheader("🎨 雙層香氣風味輪 (Olfactive Sunburst)")
@@ -364,7 +364,7 @@ else:
     # 第二排：熟成物理特性預測卡片
     st.subheader("🔬 熟成相容性與冷濾損耗預測 (Physical Stability & Cold Filtration)")
     m_eval = mod_calc["maceration_eval"]
-    
+
     cm1, cm2, cm3 = st.columns(3)
     cm1.metric("天然樹脂/重分子純佔比", f"{m_eval['finished_resin_pct']:.2f} % (成品中)")
     cm2.metric("建議陳化熟成週期", f"{m_eval['recommended_days']} 天 (室溫避光)")
