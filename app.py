@@ -24,7 +24,7 @@ analyze_formula_realtime,
 calculate_mod_profile
 )
 
-0. 系統環境設定與客製化 CSS
+--- 系統環境設定與樣式 ---
 
 st.set_page_config(page_title="Global Fragrance OS | 國際工業級調香工作站", layout="wide", page_icon="✨")
 
@@ -32,7 +32,7 @@ st.markdown("""
 
 """, unsafe_allow_html=True)
 
-1. 狀態初始化與版本控制 (Modding System)
+--- 狀態初始化與版本控制 ---
 
 if "lib_data" not in st.session_state:
 st.session_state.lib_data = load_master_library()
@@ -51,7 +51,7 @@ st.session_state.active_mod = "Mod 1"
 if "mod_notes" not in st.session_state:
 st.session_state.mod_notes = {"Mod 1": "初始版：50% 稀釋底層木質與 10% 檸檬醛微調。"}
 
-2. 側邊欄設定 (Sidebar Controls)
+--- 側邊欄控制面板 ---
 
 with st.sidebar:
 st.title("🌿 Global Fragrance OS")
@@ -85,14 +85,14 @@ total_g = sum([d["gross_g"] for d in current_formula.values()])
 st.metric("⚖️ 當前杯中總秤重", f"{total_g:.2f} g")
 
 
-核心即時運算
+--- 核心即時運算 ---
 
 active_lib = st.session_state.lib_data
 rt_calc = analyze_formula_realtime(current_formula, dosage_ratio, active_lib)
 mod_calc = calculate_mod_profile(current_formula, dosage_ratio, {"bottles": 100, "vol_ml": 50}, active_lib)
 sheet_rows = build_compounding_sheet(current_formula, active_lib)
 
-頂部 Sticky HUD 即時監控列
+--- 頂部懸浮 HUD ---
 
 if mod_calc:
 st.markdown(f"""
@@ -113,7 +113,7 @@ st.markdown(f"""
 
 """, unsafe_allow_html=True)
 
-3. 國際香精巨頭 4 大研發 SOP 導航 Tabs
+--- 主分頁導航 ---
 
 tab_step1, tab_step2, tab_step3, tab_step4, tab_lib = st.tabs([
 "🕯️ Step 1: 電腦數位預審 (Advisory)",
@@ -123,7 +123,7 @@ tab_step1, tab_step2, tab_step3, tab_step4, tab_lib = st.tabs([
 "📚 原料庫與 CAS 管理 (Library)"
 ])
 
-TAB 1: Step 1 電腦數位預審
+--- Tab 1: 電腦數位預審 ---
 
 with tab_step1:
 st.header("🕯️ Step 1: 電腦數位預審 (Digital Formulation & Regulatory Simulation)")
@@ -186,10 +186,10 @@ with col_hero_r:
     st.dataframe(pd.DataFrame(preview_rows), hide_index=True, use_container_width=True)
 
 
-TAB 2: Step 2 小量調香母表
+--- Tab 2: 小量調香母表 ---
 
 with tab_step2:
-st.markdown(f"### 📋 Step 2: 小量調香試樣 (Lab Sampling & Olfactive Profiling)")
+st.markdown("### 📋 Step 2: 小量調香試樣 (Lab Sampling & Olfactive Profiling)")
 st.caption("依投料順序排列（後調定香先投 ➔ 中調 ➔ 高揮發前調）。右側提供天平累計讀數（Running Tare）與密度滴數推估。")
 
 available_to_add = [k for k in active_lib.keys() if k not in current_formula]
@@ -298,7 +298,7 @@ else:
         st.rerun()
 
 
-TAB 3: Step 3 熟成與冷濾沉澱預測
+--- Tab 3: 熟成與冷濾預測 ---
 
 with tab_step3:
 st.header("🧪 Step 3: 等比例調配與冷濾沉澱 (Finished Compounding & Maceration)")
@@ -363,7 +363,7 @@ else:
             st.session_state.mod_notes[st.session_state.active_mod] = n_note
 
 
-TAB 4: Step 4 商業量產與 BMR 工廠工單
+--- Tab 4: 工廠量產工單 ---
 
 with tab_step4:
 st.header("🏭 Step 4: 輸出標準 BMR 工單 (Factory Scale-up & Production)")
@@ -409,7 +409,7 @@ if final_calc:
         st.caption("符合歐盟 EC 1223/2009 與美國 FDA MoCRA 10 ppm 揭露標準。")
 
 
-TAB 5: 原料資料庫動態管理
+--- Tab 5: 原料資料庫管理 ---
 
 with tab_lib:
 st.header("📚 原料資料庫動態管理 (Master Library CRUD)")
