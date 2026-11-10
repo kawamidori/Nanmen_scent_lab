@@ -1,5 +1,4 @@
 # core.py
-import json
 import math
 import numpy as np
 import pandas as pd
@@ -9,16 +8,79 @@ from config import (
     IFRA_WARN_RATIO,
     IFRA_DANGER_RATIO,
     FIXATIVE_DRAG_BASE_FACTOR,
-    EVAPORATION_RATES,
-    VAULT_FILE
+    EVAPORATION_RATES
 )
 
+def synthesize_canvas_formula(slider_weights, hero_id, target_gross_g, meta_lib):
+    """
+    【Step 1 感性畫布 ➔ 化學骨架秒級合成引擎】
+    依據 5 大感性香調拉桿 (Citrus, Floral, Woody, Spicy, Sweet) 與自選主角原料，
+    自動挑選代表性原料，配置 10%~50% 安全稀釋度，組裝 5.00g 起手配方。
+    """
+    total_w = sum(slider_weights.values())
+    if total_w <= 0:
+        norm_w = {k: 0.2 for k in slider_weights}
+    else:
+        norm_w = {k: v / total_w for k, v in slider_weights.items()}
+
+    family_pool = {}
+    for k, v in meta_lib.items():
+        fam = v.get("family", "Woody")
+        family_pool.setdefault(fam, []).append((k, v))
+
+    formula = {}
+    remaining_g = target_gross_g
+
+    # 1. 鎖定主角核心 (分配約 25% 預算)
+    if hero_id and hero_id in meta_lib:
+        hero = meta_lib[hero_id]
+        hero_g = round(target_gross_g * 0.25, 2)
+        formula[hero_id] = {
+            "gross_g": hero_g,
+            "dilution_pct": hero.get("default_dilution", 50.0),
+            "solvent": hero.get("default_solvent", "DPG (二丙二醇)")
+        }
+        remaining_g -= hero_g
+        h_fam = hero.get("family", "Woody")
+        norm_w[h_fam] = max(0.0, norm_w.get(h_fam, 0.2) - 0.25)
+        sub_total = sum(norm_w.values())
+        if sub_total > 0:
+            norm_w = {k: v / sub_total for k, v in norm_w.items()}
+
+    # 2. 依拉桿權重分配其餘香階代表原料
+    for fam, w in norm_w.items():
+        fam_budget = remaining_g * w
+        if fam_budget < 0.15:
+            continue
+        pool = family_pool.get(fam, [])
+        pool = [item for item in pool if item[0] != hero_id]
+        if not pool:
+            continue
+
+        if fam_budget >= 1.0 and len(pool) >= 2:
+            item1 = pool[0]
+            item2 = pool[1]
+            formula[item1[0]] = {
+                "gross_g": round(fam_budget * 0.6, 2),
+                "dilution_pct": item1[1].get("default_dilution", 50.0),
+                "solvent": item1[1].get("default_solvent", "DPG (二丙二醇)")
+            }
+            formula[item2[0]] = {
+                "gross_g": round(fam_budget * 0.4, 2),
+                "dilution_pct": item2[1].get("default_dilution", 50.0),
+                "solvent": item2[1].get("default_solvent", "DPG (二丙二醇)")
+            }
+        else:
+            item = pool[0]
+            formula[item[0]] = {
+                "gross_g": round(fam_budget, 2),
+                "dilution_pct": item[1].get("default_dilution", 50.0),
+                "solvent": item[1].get("default_solvent", "DPG (二丙二醇)")
+            }
+
+    return formula
+
 def generate_smart_advisory(hero_id, style_tag, meta_lib):
-    """
-    【四維情境風格共鳴引擎】
-    結合「主角原料 (Hero Material)」與「情境風格 (Scenario Vibe)」，
-    採用真實實驗室稀釋規格 (10%~50%)，自動構建 5.00g 微量打樣骨架。
-    """
     hero = meta_lib.get(hero_id)
     if not hero:
         return None
@@ -40,7 +102,7 @@ def generate_smart_advisory(hero_id, style_tag, meta_lib):
             "solvent": hero["default_solvent"]
         }
     }
-    rationale = [f"以 {hero['name_cn']} 為核心主幹（配置 {hero['default_dilution']:.0f}% 實驗室稀釋液避免氣味暴衝）"]
+    rationale = [f"以 {hero['name_cn']} 為主角（配置 {hero['default_dilution']:.0f}% 稀釋液避免氣味暴衝）"]
 
     if "清冷雨林" in style_tag:
         if hero_id != "iso_e_super":
@@ -52,18 +114,16 @@ def generate_smart_advisory(hero_id, style_tag, meta_lib):
         if hero_id != "hedione":
             starter["hedione"] = {"gross_g": 1.00, "dilution_pct": 50.0, "solvent": "DPG (二丙二醇)"}
             rationale.append("配置 Hedione (50% DPG) 展開雨林通透的空間穿透力")
-
     elif "暖陽柑橘" in style_tag:
         if hero_id != "sweet_orange":
             starter["sweet_orange"] = {"gross_g": 1.20, "dilution_pct": 50.0, "solvent": "DPG (二丙二醇)"}
-            rationale.append("鋪陳義大利甜橙 (50% DPG) 帶來充沛的果肉甜美暖陽感")
+            rationale.append("鋪陳義大利甜橙 (50% DPG) 帶來充沛果肉甜香")
         if hero_id != "bergamot_fcf":
             starter["bergamot_fcf"] = {"gross_g": 0.80, "dilution_pct": 50.0, "solvent": "DPG (二丙二醇)"}
             rationale.append("調和無光敏佛手柑 (50% DPG) 賦予精緻伯爵茶清香")
         if hero_id != "musk_t":
             starter["musk_t"] = {"gross_g": 0.80, "dilution_pct": 20.0, "solvent": "DPG (二丙二醇)"}
             rationale.append("注入白麝香 T (20% DPG) 作為日光曬過織物的柔軟貼膚結尾")
-
     elif "絲絨東方" in style_tag:
         if hero_id != "damask_rose_abs":
             starter["damask_rose_abs"] = {"gross_g": 0.50, "dilution_pct": 10.0, "solvent": "TEC (檸檬酸三乙酯)"}
@@ -74,7 +134,6 @@ def generate_smart_advisory(hero_id, style_tag, meta_lib):
         if hero_id != "iso_e_super":
             starter["iso_e_super"] = {"gross_g": 1.20, "dilution_pct": 50.0, "solvent": "DPG (二丙二醇)"}
             rationale.append("搭配龍涎酮 (50% DPG) 融合花香與木質，避免沉悶")
-
     else:
         if hero_id != "hedione":
             starter["hedione"] = {"gross_g": 1.50, "dilution_pct": 50.0, "solvent": "DPG (二丙二醇)"}
@@ -98,34 +157,27 @@ def generate_smart_advisory(hero_id, style_tag, meta_lib):
     }
 
 def build_compounding_sheet(formula_inputs, dosage_ratio, meta_lib):
-    """
-    【調香師天平即時秤重母表引擎】
-    依標準投料 SOP 排序 (定香後調 -> 核心中調 -> 高揮發前調)，
-    計算單項目標克數、純原油克數以及天平累計目標 (Cumulative g)。
-    """
     items = []
     for ing_id, data in formula_inputs.items():
-        if ing_id not in meta_lib or data["gross_g"] <= 0:
+        if ing_id not in meta_lib or data.get("gross_g", 0) <= 0:
             continue
         m = meta_lib[ing_id]
-        dil = data["dilution_pct"] / 100.0
-        active_g = data["gross_g"] * dil
-        carrier_g = data["gross_g"] * (1.0 - dil)
-
-        priority = 1 if "Base" in m["note"] else 2 if "Mid" in m["note"] else 3
+        dil = data.get("dilution_pct", 100.0) / 100.0
+        gross = data.get("gross_g", 0.0)
+        priority = 1 if "Base" in m.get("note", "") else 2 if "Mid" in m.get("note", "") else 3
 
         items.append({
             "ing_id": ing_id,
             "priority": priority,
             "cas": m.get("cas", "-"),
-            "name_cn": m["name_cn"],
-            "note": m["note"],
-            "family": m["family"],
-            "dilution_pct": data["dilution_pct"],
-            "solvent": data["solvent"],
-            "gross_g": data["gross_g"],
-            "active_g": active_g,
-            "carrier_g": carrier_g
+            "name_cn": m.get("name_cn", ing_id),
+            "note": m.get("note", "Mid"),
+            "family": m.get("family", "Floral"),
+            "dilution_pct": data.get("dilution_pct", 100.0),
+            "solvent": data.get("solvent", "None (100%純原液)"),
+            "gross_g": gross,
+            "active_g": gross * dil,
+            "carrier_g": gross * (1.0 - dil)
         })
 
     items.sort(key=lambda x: (x["priority"], x["name_cn"]))
@@ -141,21 +193,20 @@ def build_compounding_sheet(formula_inputs, dosage_ratio, meta_lib):
     return items
 
 def analyze_formula_realtime(formula_inputs, dosage_ratio, meta_lib):
-    """即時法規哨兵：CAS 穿透聚合計算"""
     total_active_g = 0.0
     active_details = {}
 
     for ing_id, data in formula_inputs.items():
-        gross = data["gross_g"]
+        gross = data.get("gross_g", 0.0)
         if gross > 0 and ing_id in meta_lib:
-            active_g = gross * (data["dilution_pct"] / 100.0)
+            active_g = gross * (data.get("dilution_pct", 100.0) / 100.0)
             total_active_g += active_g
             active_details[ing_id] = active_g
 
     if total_active_g <= 0:
-        return {"total_active_g": 0.0, "total_gross_g": 0.0, "ifra_status": {}}
+        return {"total_active_g": 0.0, "total_gross_g": 0.0, "ifra_status": {}, "allergen_summary": {}}
 
-    total_gross = sum([d["gross_g"] for d in formula_inputs.values()])
+    total_gross = sum([d.get("gross_g", 0.0) for d in formula_inputs.values()])
     cas_mass_aggregation = {}
     for ing_id, act_g in active_details.items():
         cas_no = meta_lib[ing_id].get("cas", "-")
@@ -179,15 +230,23 @@ def analyze_formula_realtime(formula_inputs, dosage_ratio, meta_lib):
             "is_warn": risk_ratio > IFRA_WARN_RATIO
         }
 
+    # 穿透計算微量致敏原濃度 (PPM)
+    allergen_totals = {}
+    for ing_id, act_g in active_details.items():
+        m = meta_lib[ing_id]
+        ing_in_finished_ratio = (act_g / total_active_g) * dosage_ratio
+        for allg_name, allg_ratio in m.get("allergens", {}).items():
+            allergen_totals[allg_name] = allergen_totals.get(allg_name, 0.0) + (ing_in_finished_ratio * allg_ratio * 1_000_000.0)
+
     return {
         "total_active_g": total_active_g,
         "total_gross_g": total_gross,
-        "ifra_status": ifra_status
+        "ifra_status": ifra_status,
+        "allergen_summary": allergen_totals
     }
 
 def calculate_mod_profile(formula_inputs, dosage_ratio, batch_target, meta_lib):
-    """Mod 全維度解析：風味輪、香調金字塔、致敏原、工廠 BMR 與 24h 動力學"""
-    total_gross_g = sum([item["gross_g"] for item in formula_inputs.values()])
+    total_gross_g = sum([item.get("gross_g", 0.0) for item in formula_inputs.values()])
     if total_gross_g <= 0:
         return None
 
@@ -198,21 +257,21 @@ def calculate_mod_profile(formula_inputs, dosage_ratio, batch_target, meta_lib):
     total_cost = 0.0
 
     for ing_id, data in formula_inputs.items():
-        gross = data["gross_g"]
+        gross = data.get("gross_g", 0.0)
         if gross <= 0 or ing_id not in meta_lib:
             continue
-        dil_ratio = data["dilution_pct"] / 100.0
+        dil_ratio = data.get("dilution_pct", 100.0) / 100.0
         active_g = gross * dil_ratio
         carrier_g = gross * (1.0 - dil_ratio)
-        solvent = data["solvent"]
+        solvent = data.get("solvent", "None (100%純原液)")
 
         active_compounds[ing_id] = {
-            "gross_g": gross, "dilution_pct": data["dilution_pct"],
+            "gross_g": gross, "dilution_pct": data.get("dilution_pct", 100.0),
             "active_g": active_g, "carrier_g": carrier_g, "solvent": solvent
         }
         total_active_g += active_g
         total_carrier_g += carrier_g
-        total_cost += active_g * meta_lib[ing_id]["cost_per_g"]
+        total_cost += active_g * meta_lib[ing_id].get("cost_per_g", 0.0)
 
         if carrier_g > 0 and "純原液" not in solvent:
             carrier_solvents[solvent] = carrier_solvents.get(solvent, 0.0) + carrier_g
@@ -232,12 +291,12 @@ def calculate_mod_profile(formula_inputs, dosage_ratio, batch_target, meta_lib):
             "family": m["family"], "cas": m.get("cas", "-")
         }
 
-        note = m["note"]
+        note = m.get("note", "Mid")
         if "Top" in note: notes_pct["Top"] += pct * (0.5 if "-" in note else 1.0)
         if "Mid" in note: notes_pct["Mid"] += pct * (0.5 if "-" in note else 1.0)
         if "Base" in note: notes_pct["Base"] += pct * (0.5 if "-" in note else 1.0)
 
-        fam = m["family"]
+        fam = m.get("family", "Woody")
         family_pct[fam] = family_pct.get(fam, 0.0) + pct
 
     allergen_totals = {}
@@ -266,7 +325,7 @@ def calculate_mod_profile(formula_inputs, dosage_ratio, batch_target, meta_lib):
         m = meta_lib[ing_id]
         dil_str = f"{item['dilution_pct']:.0f}% in {item['solvent'].split(' ')[0]}" if item['dilution_pct'] < 100 else "100% Neat"
         bmr_rows.append({
-            "order": 1 if "Base" in m["note"] else 2 if "Mid" in m["note"] else 3,
+            "order": 1 if "Base" in m.get("note", "") else 2 if "Mid" in m.get("note", "") else 3,
             "phase": "Phase A", "cas": item["cas"], "name": m["name_cn"], "spec": dil_str,
             "active_w_pct": round(item["active_pct"], 3),
             "target_batch_g": round(item["gross_g"] * scale_factor, 2)
@@ -300,19 +359,3 @@ def calculate_mod_profile(formula_inputs, dosage_ratio, batch_target, meta_lib):
         "bmr_rows": bmr_rows,
         "trajectory": pd.DataFrame(traj)
     }
-
-def append_to_data_vault(record: dict):
-    with open(VAULT_FILE, "a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-def read_vault_records():
-    records = []
-    if VAULT_FILE.exists():
-        with open(VAULT_FILE, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
-                    try:
-                        records.append(json.loads(line))
-                    except Exception:
-                        pass
-    return records
