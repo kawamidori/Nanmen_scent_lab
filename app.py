@@ -22,7 +22,10 @@ from core import (
     synthesize_canvas_formula,
     build_compounding_sheet,
     analyze_formula_realtime,
-    calculate_mod_profile
+    calculate_mod_profile,
+    calc_effective_sg,
+    drops_to_grams,
+    grams_to_drops
 )
 
 st.set_page_config(page_title="Global Fragrance OS | 專業調香工作站", layout="wide", page_icon="✨")
@@ -36,6 +39,7 @@ st.markdown("""
     .mod-pill { background: #0F172A; color: #38BDF8; padding: 4px 12px; border-radius: 6px; font-weight: bold; border: 1px solid #0284C7; }
     .hero-card { background: #F8FAFC; border: 1px solid #E2E8F0; padding: 16px; border-radius: 10px; margin-bottom: 12px; }
     .scale-chip { background: #064E3B; color: #6EE7B7; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 13px; font-weight: bold; display: inline-block; }
+    .drop-chip { background: #1E3A8A; color: #93C5FD; padding: 3px 6px; border-radius: 4px; font-family: monospace; font-size: 12px; }
     .cas-badge { background: #F1F5F9; color: #475569; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 11px; border: 1px solid #CBD5E1; }
     .ifra-badge-safe { background: #DCFCE7; color: #15803D; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
     .ifra-badge-warn { background: #FEF3C7; color: #B45309; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
@@ -71,6 +75,8 @@ if "active_mod" not in st.session_state:
     st.session_state.active_mod = "Mod 1"
 if "mod_notes" not in st.session_state:
     st.session_state.mod_notes = {"Mod 1": "初始版：50% 稀釋底層木質與 10% 檸檬醛微調。"}
+if "dosed_checklist" not in st.session_state:
+    st.session_state.dosed_checklist = {}
 
 with st.sidebar:
     st.title("🌿 Scent Architect")
@@ -135,7 +141,7 @@ if mod_calc:
 
 t_adv, t_atelier, t_arch, t_scaleup = st.tabs([
     "🎨 1. 感性畫布與法規預審 (Step 1)",
-    "📋 2. 調香師秤重母表 (Step 2)",
+    "📋 2. 調香師放樣秤重母表 (Step 2)",
     "📐 3. 氣味建築與熟成預測 (Step 3)",
     "🏭 4. 商業量產工單 (Step 4)"
 ])
@@ -182,7 +188,6 @@ with t_adv:
     with c_canvas_r:
         st.subheader("💡 系統化學秒級拆解預覽 (5.00g 起手)")
         
-        # 能量輪廓雷達
         fig_preview_rad = go.Figure(go.Scatterpolar(
             r=list(slider_dict.values()) + [list(slider_dict.values())[0]],
             theta=list(slider_dict.keys()) + [list(slider_dict.keys())[0]],
@@ -225,12 +230,25 @@ with t_adv:
             st.success("✅ 此香氣骨架未檢測出任何法定過敏原！")
 
 # ==============================================================================
-# TAB 2: 調香師即時秤重母表 (Step 2)
+# TAB 2: 調香師放樣秤重母表 (Step 2: 雙視角轉換引擎)
 # ==============================================================================
 with t_atelier:
-    st.markdown(f"### 📋 調香師即時秤重母表：<span class='mod-pill'>{st.session_state.active_mod}</span>", unsafe_allow_html=True)
-    st.caption("依工業標準投料順序排列（後調定香先投 ➔ 中調 ➔ 高揮發前調）。右側提供天平累計秤重，精準掌握每次下滴停秤點。")
+    st.markdown(f"### 📋 調香師放樣秤重母表：<span class='mod-pill'>{st.session_state.active_mod}</span>", unsafe_allow_html=True)
+    st.caption("依工業標準投料順序排列（後調定香先投 ➔ 中調 ➔ 高揮發前調）。支援滴數與克數雙向物理秒轉，並提供天平累計讀數（Running Tare）。")
 
+    c_mode_l, c_mode_r = st.columns([2, 1.5])
+    with c_mode_l:
+        compounding_view = st.radio(
+            "🎛️ 選擇操作視角模式：",
+            ["⚖️ 電子天平精密模式 (克數 g)", "💧 感性滴管快調模式 (滴數 Drops)"],
+            horizontal=True
+        )
+    with c_mode_r:
+        if st.button("🔄 重置本次打樣打勾記錄", use_container_width=True):
+            st.session_state.dosed_checklist[st.session_state.active_mod] = {}
+            st.rerun()
+
+    # 頂部：搜尋並添加新原料
     available_to_add = [k for k in MASTER_LIBRARY.keys() if k not in current_formula]
     c_add_sel, c_add_btn = st.columns([3.5, 1])
     with c_add_sel:
@@ -255,48 +273,95 @@ with t_atelier:
     if not sheet_rows:
         st.info("👈 當前配方為空。請於上方搜尋加入原料，或前往 Tab 1 由智慧畫布注入起手骨架。")
     else:
-        hdr_cols = st.columns([0.6, 2.5, 1.4, 1.5, 1.5, 1.5, 1.2, 0.6])
-        hdr_cols[0].markdown("**順序**")
-        hdr_cols[1].markdown("**原料名稱與 CAS**")
-        hdr_cols[2].markdown("**濃度規格**")
-        hdr_cols[3].markdown("**溶劑載體**")
-        hdr_cols[4].markdown("**本次投料 (g)**")
-        hdr_cols[5].markdown("**天平累計 (g)**")
-        hdr_cols[6].markdown("**IFRA 狀態**")
-        hdr_cols[7].markdown("**操作**")
+        # 表頭配置
+        hdr_cols = st.columns([0.5, 0.6, 2.3, 1.3, 1.4, 1.6, 1.5, 1.0, 0.5])
+        hdr_cols[0].markdown("**已加**")
+        hdr_cols[1].markdown("**順序**")
+        hdr_cols[2].markdown("**原料名稱與 CAS**")
+        hdr_cols[3].markdown("**濃度**")
+        hdr_cols[4].markdown("**溶劑載體**")
+        if "克數" in compounding_view:
+            hdr_cols[5].markdown("**本次秤重 (g)**")
+            hdr_cols[6].markdown("**天平累計 (Tare)**")
+        else:
+            hdr_cols[5].markdown("**本次滴數 (Drops)**")
+            hdr_cols[6].markdown("**天平累計 (g/滴)**")
+        hdr_cols[7].markdown("**IFRA 狀態**")
+        hdr_cols[8].markdown("**刪除**")
 
         updated_formula = {}
         to_delete = None
+        current_mod_checks = st.session_state.dosed_checklist.setdefault(st.session_state.active_mod, {})
 
         for row in sheet_rows:
             ing_id = row["ing_id"]
             m = MASTER_LIBRARY[ing_id]
-            r_cols = st.columns([0.6, 2.5, 1.4, 1.5, 1.5, 1.5, 1.2, 0.6])
+            r_cols = st.columns([0.5, 0.6, 2.3, 1.3, 1.4, 1.6, 1.5, 1.0, 0.5])
 
-            r_cols[0].markdown(f"**#{row['seq']}**\n`{row['note']}`")
-            r_cols[1].markdown(f"**{row['name_cn']}**\n<span class='cas-badge'>CAS: {row['cas']}</span>", unsafe_allow_html=True)
+            # 0. 實體投料打勾核對 (防重複投料)
+            is_dosed = r_cols[0].checkbox(
+                "已投", value=current_mod_checks.get(ing_id, False),
+                key=f"chk_{st.session_state.active_mod}_{ing_id}", label_visibility="collapsed"
+            )
+            current_mod_checks[ing_id] = is_dosed
 
+            # 1. 投料順序
+            row_prefix = "✅ " if is_dosed else ""
+            r_cols[1].markdown(f"**{row_prefix}#{row['seq']}**\n`{row['note']}`")
+
+            # 2. 原料名稱與 CAS
+            name_style = "text-decoration: line-through; color: #94A3B8;" if is_dosed else "font-weight: 600;"
+            r_cols[2].markdown(
+                f"<span style='{name_style}'>{row['name_cn']}</span><br>"
+                f"<span class='cas-badge'>CAS: {row['cas']}</span> "
+                f"<span style='font-size:11px; color:#64748B;'>ρ: {row['eff_sg']}</span>",
+                unsafe_allow_html=True
+            )
+
+            # 3. 濃度規格 (行內編輯)
             dil_opts = DILUTION_TIERS
-            new_dil = r_cols[2].selectbox(
+            new_dil = r_cols[3].selectbox(
                 "濃度", dil_opts,
                 index=dil_opts.index(float(row["dilution_pct"])) if float(row["dilution_pct"]) in dil_opts else 0,
                 key=f"sh_d_{st.session_state.active_mod}_{ing_id}", label_visibility="collapsed"
             )
 
-            new_sol = r_cols[3].selectbox(
+            # 4. 溶劑載體 (行內編輯)
+            new_sol = r_cols[4].selectbox(
                 "溶劑", SOLVENT_CHOICES,
                 index=SOLVENT_CHOICES.index(row["solvent"]) if row["solvent"] in SOLVENT_CHOICES else 0,
                 key=f"sh_s_{st.session_state.active_mod}_{ing_id}", label_visibility="collapsed"
             )
 
-            new_g = r_cols[4].number_input(
-                "投料", min_value=0.01, max_value=50.00,
-                value=float(row["gross_g"]), step=0.05, format="%.2f",
-                key=f"sh_g_{st.session_state.active_mod}_{ing_id}", label_visibility="collapsed"
+            eff_sg_now = calc_effective_sg(m.get("sg", 1.0), new_sol, new_dil)
+
+            # 5. 雙向輸入視角
+            if "克數" in compounding_view:
+                new_g = r_cols[5].number_input(
+                    "投料克數", min_value=0.01, max_value=50.00,
+                    value=float(row["gross_g"]), step=0.05, format="%.2f",
+                    key=f"sh_g_{st.session_state.active_mod}_{ing_id}", label_visibility="collapsed"
+                )
+                est_d = grams_to_drops(new_g, eff_sg_now)
+                r_cols[5].caption(f"💧 約 {est_d} 滴")
+            else:
+                current_drops = int(row["drops"])
+                input_drops = r_cols[5].number_input(
+                    "投料滴數", min_value=1, max_value=2000,
+                    value=current_drops, step=1,
+                    key=f"sh_drop_{st.session_state.active_mod}_{ing_id}", label_visibility="collapsed"
+                )
+                new_g = drops_to_grams(input_drops, eff_sg_now)
+                r_cols[5].caption(f"⚖️ {new_g:.2f} g")
+
+            # 6. 天平累計目標 (Running Tare)
+            r_cols[6].markdown(
+                f"<span class='scale-chip'>⚖️ {row['cumulative_g']:.2f} g</span><br>"
+                f"<span class='drop-chip'>累計 {row['cumulative_drops']} 滴</span>",
+                unsafe_allow_html=True
             )
 
-            r_cols[5].markdown(f"<span class='scale-chip'>⚖️ {row['cumulative_g']:.2f} g</span>", unsafe_allow_html=True)
-
+            # 7. IFRA 狀態
             status_html = "<span class='ifra-badge-safe'>PASS</span>"
             if ing_id in rt_calc["ifra_status"]:
                 risk = rt_calc["ifra_status"][ing_id]["risk_ratio"]
@@ -304,9 +369,10 @@ with t_atelier:
                     status_html = f"<span class='ifra-badge-danger'>超標 {risk*100:.0f}%</span>"
                 elif risk > 0.8:
                     status_html = f"<span class='ifra-badge-warn'>警戒 {risk*100:.0f}%</span>"
-            r_cols[6].markdown(status_html, unsafe_allow_html=True)
+            r_cols[7].markdown(status_html, unsafe_allow_html=True)
 
-            with r_cols[7]:
+            # 8. 刪除
+            with r_cols[8]:
                 if st.button("🗑️", key=f"sh_del_{st.session_state.active_mod}_{ing_id}"):
                     to_delete = ing_id
 
@@ -316,6 +382,7 @@ with t_atelier:
             del st.session_state.mods[st.session_state.active_mod][to_delete]
             st.rerun()
 
+        # 檢測是否有數值更新
         has_changed = False
         if set(updated_formula.keys()) != set(current_formula.keys()):
             has_changed = True
