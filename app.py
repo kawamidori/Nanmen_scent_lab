@@ -301,4 +301,4 @@ with t_adv:
         }
 
         st.subheader("2. 鎖定主角原料 (選填)")
-        hero_options = ["None (由
+        hhero_options = ["None (由系統演算法全權支配)"] + list(MASTER_LIBRARY.keys())
